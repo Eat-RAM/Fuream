@@ -1,0 +1,19 @@
+{
+  "required": true,
+  "minVersion": "0.8",
+  "package": "io.github.eat_ram.fuream.mixin",
+  "compatibilityLevel": "JAVA_17",
+  "mixins": [
+    "AbstractFurnaceBlockEntityAccessor",
+    "AbstractFurnaceBlockEntityMixin",
+    "AbstractFurnaceBlockMixin",
+    "BlastFurnaceBlockEntityMixin",
+    "FurnaceBlockEntityMixin",
+    "HopperBlockEntityMixin",
+    "MinecraftServerMixin",
+    "SmokerBlockEntityMixin"
+  ],
+  "injectors": {
+    "defaultRequire": 1
+  }
+}

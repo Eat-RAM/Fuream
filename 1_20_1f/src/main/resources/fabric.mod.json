@@ -1,0 +1,30 @@
+{
+  "schemaVersion": 1,
+  "id": "fuream",
+  "version": "0.0.1",
+  "name": "Fuream",
+  "description": "Furnace slot expansion & experience accumulation & recipe conflict solving, 3-in-1",
+  "authors": [
+    {
+      "name": "REGE",
+      "contact": {
+        "homepage": "https://github.com/IAmREGE"
+      }
+    }
+  ],
+  "contact": {
+    "homepage": "https://github.com/Eat-RAM/Fuream",
+    "issues": "https://github.com/Eat-RAM/Fuream/issues",
+    "sources": "https://github.com/Eat-RAM/Fuream"
+  },
+  "license": "MIT",
+  "icon": "assets/fuream/textures/icon.png",
+  "environment": "*",
+  "entrypoints": {},
+  "mixins": ["fuream.mixins.json"],
+  "depends": {
+    "fabricloader": ">=0.15.0",
+    "minecraft": ["1.19.4", "1.20-alpha.23.13.ab", "1.20", "1.20.1"],
+    "java": ">=17"
+  }
+}

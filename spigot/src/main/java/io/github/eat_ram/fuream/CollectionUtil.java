@@ -10,6 +10,7 @@ import org.jetbrains.annotations.Range;
 
 public abstract class CollectionUtil {
     @Contract(value = "_, _ -> new", pure = true)
+    @SuppressWarnings("unchecked")
     public static <E> ArrayList<E> newDefaultedArrayList(
         E defaultValue,
         @Range(from = 0, to = Integer.MAX_VALUE) int initialSize
@@ -26,7 +27,7 @@ public abstract class CollectionUtil {
             @Override
             @Contract(pure = true)
             public E get(int index) {
-                return index < this.size() ? super.get(index) : makeDefault();
+                return index < this.size() ? super.get(index) : this.makeDefault();
             }
 
             @Override
@@ -37,10 +38,10 @@ public abstract class CollectionUtil {
                 }
                 this.ensureCapacity(index + 1);
                 for (; size < index; ++size) {
-                    this.add(makeDefault());
+                    this.add(this.makeDefault());
                 }
                 this.add(element);
-                return makeDefault();
+                return this.makeDefault();
             }
         };
         if (initialSize > 0) {

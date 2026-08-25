@@ -1,7 +1,6 @@
 package io.github.eat_ram.fuream.screen;
 
 import java.util.ArrayList;
-import java.util.Collections;
 import java.util.List;
 import java.util.function.BiFunction;
 
@@ -111,7 +110,7 @@ public class FureamScreenInventory {
         String title = type == FurnaceType.SMOKER ? "Smoker" : (type == FurnaceType.BLAST_FURNACE ? "Blast Furnace" : "Furnace");
         this.bukkitInventory = Bukkit.createInventory(null, 54, title);
 
-        this.cookTimeTotal = computeCookTimeTotal();
+        this.cookTimeTotal = this.computeCookTimeTotal();
         this.switchPage(0);
         for (BiFunction<
             ? super FureamScreenInventory, ? super FureamWorldConfig,
@@ -184,7 +183,7 @@ public class FureamScreenInventory {
     }
 
     public void refreshVisuals() {
-        this.cookTimeTotal = computeCookTimeTotal();
+        this.cookTimeTotal = this.computeCookTimeTotal();
         if (this.cookTime >= this.cookTimeTotal) {
             this.cookTime = Math.max(0, this.cookTimeTotal - 1);
         }
@@ -211,7 +210,7 @@ public class FureamScreenInventory {
     public void syncToBukkitInventory() {
         for (int i = 0; i < 54; i++) {
             ItemStack stack = this.getStack(i);
-            this.bukkitInventory.setItem(i, stack != null ? stack : new ItemStack(Material.AIR));
+            this.bukkitInventory.setItem(i, stack);
         }
     }
 
@@ -231,13 +230,13 @@ public class FureamScreenInventory {
             this.page = page;
             this.prevPageBtn = makeTooltipItem(
                 new ItemStack(this.prevPageItem, 1),
-                config != null ? config.getGuiPrevPageItemTitle().get(this.furnaceType) : "Previous Page",
-                String.format(config != null ? config.getGuiPrevPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
+                    this.config != null ? this.config.getGuiPrevPageItemTitle().get(this.furnaceType) : "Previous Page",
+                String.format(this.config != null ? this.config.getGuiPrevPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
             );
             this.nextPageBtn = makeTooltipItem(
                 new ItemStack(this.nextPageItem, 1),
-                config != null ? config.getGuiNextPageItemTitle().get(this.furnaceType) : "Next Page",
-                String.format(config != null ? config.getGuiNextPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
+                    this.config != null ? this.config.getGuiNextPageItemTitle().get(this.furnaceType) : "Next Page",
+                String.format(this.config != null ? this.config.getGuiNextPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
             );
             this.syncToBukkitInventory();
         }
@@ -261,18 +260,18 @@ public class FureamScreenInventory {
     }
 
     private @NotNull ItemStack addFuelTooltip(@NotNull ItemStack stack) {
-        String title = config != null ? config.getGuiFuelItemTitle().get(this.furnaceType) : "Fuel";
+        String title = this.config != null ? this.config.getGuiFuelItemTitle().get(this.furnaceType) : "Fuel";
         String lore = String.format(
-            config != null ? config.getGuiFuelItemTooltip().get(this.furnaceType) : "Available: %d / %d",
+                this.config != null ? this.config.getGuiFuelItemTooltip().get(this.furnaceType) : "Available: %d / %d",
             this.burnTime, this.fuelTimeTotal
         );
         return makeTooltipItem(stack, title, lore);
     }
 
     private @NotNull ItemStack addProgressTooltip(@NotNull ItemStack stack) {
-        String title = config != null ? config.getGuiProgressItemTitle().get(this.furnaceType) : "Progress";
+        String title = this.config != null ? this.config.getGuiProgressItemTitle().get(this.furnaceType) : "Progress";
         String lore = String.format(
-            config != null ? config.getGuiProgressItemTooltip().get(this.furnaceType) : "%d / %d",
+                this.config != null ? this.config.getGuiProgressItemTooltip().get(this.furnaceType) : "%d / %d",
             this.cookTime, this.cookTimeTotal
         );
         return makeTooltipItem(stack, title, lore);
@@ -318,10 +317,10 @@ public class FureamScreenInventory {
                 this.functionalAreas.get(ca).getGuiStack(this, slot - 45) : this.border;
         }
         if (slot >= 9 && slot < 18) {
-            return this.fuelBar[slot - 9] != null ? this.fuelBar[slot - 9] : this.border;
+            return this.fuelBar[slot - 9];
         }
         if (slot >= 27 && slot < 36) {
-            return this.progBar[slot - 27] != null ? this.progBar[slot - 27] : this.border;
+            return this.progBar[slot - 27];
         }
         if (slot == 51) return this.nextFunctionalBtn;
         if (slot == 52) return this.prevPageBtn;
@@ -335,32 +334,32 @@ public class FureamScreenInventory {
             while (this.data.inputs.size() <= idx) {
                 this.data.inputs.add(new ItemStack(Material.AIR));
             }
-            this.data.inputs.set(idx, stack != null ? stack : new ItemStack(Material.AIR));
+            this.data.inputs.set(idx, stack);
         } else if (this.isFuelRowSlot(slot)) {
             int idx = this.page * 9 + slot - 18;
             while (this.data.fuels.size() <= idx) {
                 this.data.fuels.add(new ItemStack(Material.AIR));
             }
-            this.data.fuels.set(idx, stack != null ? stack : new ItemStack(Material.AIR));
+            this.data.fuels.set(idx, stack);
         } else if (this.isOutputSlot(slot)) {
             int idx = this.page * 9 + slot - 36;
             while (this.data.outputs.size() <= idx) {
                 this.data.outputs.add(new ItemStack(Material.AIR));
             }
-            this.data.outputs.set(idx, stack != null ? stack : new ItemStack(Material.AIR));
+            this.data.outputs.set(idx, stack);
         } else if (this.isFunctionalAreaSlot(slot)) {
             int ca = this.getCurrentFunctionalArea();
             if (ca < this.functionalAreas.size()) {
                 FureamFunctionalArea area = this.functionalAreas.get(ca);
                 if (area.isStorable(this, slot - 45)) {
-                    area.setGuiStack(this, slot - 45, stack != null ? stack : new ItemStack(Material.AIR));
+                    area.setGuiStack(this, slot - 45, stack);
                 }
             }
         }
     }
 
     public boolean isValid(int slot, @NotNull ItemStack stack) {
-        if (stack != null && !stack.getType().isAir()) {
+        if (!stack.getType().isAir()) {
             if (this.isInputSlot(slot)) return true;
             if (this.isFuelRowSlot(slot)) return FureamFurnaceLogic.isFuel(stack);
         }

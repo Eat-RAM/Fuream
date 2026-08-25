@@ -1,7 +1,6 @@
 package io.github.eat_ram.fuream.hook;
 
 import java.lang.reflect.Field;
-import java.util.List;
 
 import io.github.eat_ram.fuream.FureamMain;
 import io.github.eat_ram.fuream.api.FurnaceType;
@@ -11,7 +10,6 @@ import io.github.eat_ram.fuream.logic.FureamFurnaceLogic;
 import io.github.eat_ram.fuream.util.FurnacePos;
 import org.bukkit.Location;
 import org.bukkit.block.Block;
-import org.bukkit.entity.Player;
 import org.bukkit.event.EventHandler;
 import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
@@ -24,25 +22,25 @@ import org.bukkit.inventory.ItemStack;
 public class BlockBreakListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBreak(BlockBreakEvent event) {
-        handleFurnaceBreak(event.getBlock());
+        this.handleFurnaceBreak(event.getBlock());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockBurn(BlockBurnEvent event) {
-        handleFurnaceBreak(event.getBlock());
+        this.handleFurnaceBreak(event.getBlock());
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onBlockExplode(BlockExplodeEvent event) {
         for (Block b : event.blockList()) {
-            handleFurnaceBreak(b);
+            this.handleFurnaceBreak(b);
         }
     }
 
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onEntityExplode(EntityExplodeEvent event) {
         for (Block b : event.blockList()) {
-            handleFurnaceBreak(b);
+            this.handleFurnaceBreak(b);
         }
     }
 

@@ -37,7 +37,7 @@ public class FureamScreenHandler {
                 event.setCancelled(true);
                 ItemStack current = event.getCurrentItem();
                 if (current != null && !current.getType().isAir()) {
-                    ItemStack remaining = quickMoveToContainer(current);
+                    ItemStack remaining = this.quickMoveToContainer(current);
                     event.setCurrentItem(remaining.getType().isAir() ? null : remaining);
                     this.display.syncToBukkitInventory();
                 }
@@ -53,7 +53,7 @@ public class FureamScreenHandler {
             if (ca < this.display.functionalAreas.size()) {
                 FureamFunctionalArea area = this.display.functionalAreas.get(ca);
                 area.onGuiClick(
-                    (sIdx, btn, ct, p) -> handleFunctionalSlotDefault(rawSlot, sIdx, event, p),
+                    (sIdx, btn, ct, p) -> this.handleFunctionalSlotDefault(rawSlot, sIdx, event, p),
                     this.display, rawSlot - 45, event.getHotbarButton(), clickType, player
                 );
                 this.display.syncToBukkitInventory();
@@ -82,15 +82,14 @@ public class FureamScreenHandler {
         }
 
         if (this.display.isOutputSlot(rawSlot)) {
-            onOutputSlotClick(rawSlot, event, player);
+            this.onOutputSlotClick(rawSlot, event, player);
             this.display.syncToBukkitInventory();
             return;
         }
 
         if (this.display.isInputSlot(rawSlot) || this.display.isFuelRowSlot(rawSlot)) {
-            onMaterialSlotClick(rawSlot, event, player);
+            this.onMaterialSlotClick(rawSlot, event, player);
             this.display.syncToBukkitInventory();
-            return;
         }
     }
 
@@ -106,7 +105,7 @@ public class FureamScreenHandler {
 
         // 1. Shift click
         if (event.isShiftClick()) {
-            if (current != null && !current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
+            if (!current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
                 Map<Integer, ItemStack> leftover = player.getInventory().addItem(current.clone());
                 if (leftover.isEmpty()) {
                     area.setGuiStack(this.display, rawSlot - 45, new ItemStack(Material.AIR));
@@ -115,7 +114,7 @@ public class FureamScreenHandler {
                     area.setGuiStack(this.display, rawSlot - 45, current);
                 }
             }
-            markDirtyAndSave();
+            this.markDirtyAndSave();
             return;
         }
 
@@ -125,12 +124,12 @@ public class FureamScreenHandler {
             if (hotbarSlot >= 0 && hotbarSlot < 9) {
                 ItemStack hotbarItem = player.getInventory().getItem(hotbarSlot);
                 if (hotbarItem == null || hotbarItem.getType().isAir()) {
-                    if (current != null && !current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
+                    if (!current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
                         player.getInventory().setItem(hotbarSlot, current.clone());
                         area.setGuiStack(this.display, rawSlot - 45, new ItemStack(Material.AIR));
                     }
                 } else if (area.isStorable(this.display, rawSlot - 45)) {
-                    if (current == null || current.getType().isAir()) {
+                    if (current.getType().isAir()) {
                         area.setGuiStack(this.display, rawSlot - 45, hotbarItem.clone());
                         player.getInventory().setItem(hotbarSlot, new ItemStack(Material.AIR));
                     } else if (area.isTakable(this.display, rawSlot - 45)) {
@@ -139,13 +138,13 @@ public class FureamScreenHandler {
                     }
                 }
             }
-            markDirtyAndSave();
+            this.markDirtyAndSave();
             return;
         }
 
         // 3. Cursor empty -> Take item from slot
         if (cursor == null || cursor.getType().isAir()) {
-            if (current != null && !current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
+            if (!current.getType().isAir() && area.isTakable(this.display, rawSlot - 45)) {
                 if (event.isRightClick()) {
                     int half = (current.getAmount() + 1) / 2;
                     ItemStack take = current.clone();
@@ -161,7 +160,7 @@ public class FureamScreenHandler {
         } else {
             // 4. Cursor has item -> Place/Swap into slot
             if (area.isStorable(this.display, rawSlot - 45)) {
-                if (current == null || current.getType().isAir()) {
+                if (current.getType().isAir()) {
                     if (event.isRightClick()) {
                         ItemStack putOne = cursor.clone();
                         putOne.setAmount(1);
@@ -197,7 +196,7 @@ public class FureamScreenHandler {
                 }
             }
         }
-        markDirtyAndSave();
+        this.markDirtyAndSave();
     }
 
     private void markDirtyAndSave() {
@@ -211,7 +210,7 @@ public class FureamScreenHandler {
 
     private void onOutputSlotClick(int slotIndex, InventoryClickEvent event, Player player) {
         ItemStack current = this.display.getStack(slotIndex);
-        if (current == null || current.getType().isAir()) return;
+        if (current.getType().isAir()) return;
 
         if (event.isShiftClick()) {
             Map<Integer, ItemStack> leftover = player.getInventory().addItem(current.clone());
@@ -221,7 +220,7 @@ public class FureamScreenHandler {
                 current.setAmount(leftover.values().iterator().next().getAmount());
                 this.display.setStack(slotIndex, current);
             }
-            markDirtyAndSave();
+            this.markDirtyAndSave();
             return;
         }
 
@@ -240,7 +239,7 @@ public class FureamScreenHandler {
                 this.display.setStack(slotIndex, current.getAmount() > 0 ? current : new ItemStack(Material.AIR));
             }
         }
-        markDirtyAndSave();
+        this.markDirtyAndSave();
     }
 
     private void onMaterialSlotClick(int slotIndex, InventoryClickEvent event, Player player) {
@@ -249,7 +248,7 @@ public class FureamScreenHandler {
         ItemStack current = this.display.getStack(slotIndex);
 
         if (event.isShiftClick()) {
-            if (current != null && !current.getType().isAir()) {
+            if (!current.getType().isAir()) {
                 Map<Integer, ItemStack> leftover = player.getInventory().addItem(current.clone());
                 if (leftover.isEmpty()) {
                     this.display.setStack(slotIndex, new ItemStack(Material.AIR));
@@ -258,12 +257,12 @@ public class FureamScreenHandler {
                     this.display.setStack(slotIndex, current);
                 }
             }
-            markDirtyAndSave();
+            this.markDirtyAndSave();
             return;
         }
 
         if (cursor == null || cursor.getType().isAir()) {
-            if (current != null && !current.getType().isAir()) {
+            if (!current.getType().isAir()) {
                 if (event.isRightClick()) {
                     int half = (current.getAmount() + 1) / 2;
                     ItemStack take = current.clone();
@@ -280,7 +279,7 @@ public class FureamScreenHandler {
             if (isFuel && !FureamFurnaceLogic.isFuel(cursor)) {
                 return;
             }
-            if (current == null || current.getType().isAir()) {
+            if (current.getType().isAir()) {
                 if (event.isRightClick()) {
                     ItemStack putOne = cursor.clone();
                     putOne.setAmount(1);
@@ -315,7 +314,7 @@ public class FureamScreenHandler {
                 event.getView().setCursor(current.clone());
             }
         }
-        markDirtyAndSave();
+        this.markDirtyAndSave();
     }
 
     private @NotNull ItemStack quickMoveToContainer(@NotNull ItemStack original) {
@@ -323,9 +322,9 @@ public class FureamScreenHandler {
         if (FureamFurnaceLogic.isAcceptableInput(this.display.location.getWorld(), remaining, this.display.furnaceType)) {
             int stop = this.display.getInputSlotStop();
             for (int i = 0; i < stop; i++) {
-                remaining = insertIntoSlot(i, remaining);
+                remaining = this.insertIntoSlot(i, remaining);
                 if (remaining.getType().isAir() || remaining.getAmount() <= 0) {
-                    markDirtyAndSave();
+                    this.markDirtyAndSave();
                     return new ItemStack(Material.AIR);
                 }
             }
@@ -334,20 +333,20 @@ public class FureamScreenHandler {
             int fuelStart = 18;
             int stop = this.display.getFuelSlotStop();
             for (int i = fuelStart; i < stop; i++) {
-                remaining = insertIntoSlot(i, remaining);
+                remaining = this.insertIntoSlot(i, remaining);
                 if (remaining.getType().isAir() || remaining.getAmount() <= 0) {
-                    markDirtyAndSave();
+                    this.markDirtyAndSave();
                     return new ItemStack(Material.AIR);
                 }
             }
         }
-        markDirtyAndSave();
+        this.markDirtyAndSave();
         return remaining;
     }
 
     private @NotNull ItemStack insertIntoSlot(int slotIndex, @NotNull ItemStack stack) {
         ItemStack current = this.display.getStack(slotIndex);
-        if (current == null || current.getType().isAir()) {
+        if (current.getType().isAir()) {
             this.display.setStack(slotIndex, stack.clone());
             return new ItemStack(Material.AIR);
         }

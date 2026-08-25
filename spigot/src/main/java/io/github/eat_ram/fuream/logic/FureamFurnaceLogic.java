@@ -122,7 +122,7 @@ public abstract class FureamFurnaceLogic {
         }
         data.outputs.clear();
 
-        if (data.recipeOverridingInput != null && !data.recipeOverridingInput.getType().isAir()) {
+        if (!data.recipeOverridingInput.getType().isAir()) {
             dropIfPresent(world, center, data.recipeOverridingInput);
             data.recipeOverridingInput = new ItemStack(Material.AIR);
         }

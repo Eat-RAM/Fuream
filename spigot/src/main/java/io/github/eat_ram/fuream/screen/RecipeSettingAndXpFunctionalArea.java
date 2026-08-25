@@ -14,7 +14,6 @@ import org.bukkit.entity.Player;
 import org.bukkit.event.inventory.ClickType;
 import org.bukkit.inventory.CookingRecipe;
 import org.bukkit.inventory.ItemStack;
-import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -69,7 +68,7 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
     @Contract(pure = true)
     public @NotNull ItemStack getGuiStack(FureamScreenInventory inv, int slot) {
         switch (slot) {
-            case 0: return inv.data.recipeOverridingInput != null ? inv.data.recipeOverridingInput : new ItemStack(Material.AIR);
+            case 0: return inv.data.recipeOverridingInput;
             case 1: return this.prevRecipeBtn;
             case 2: return this.nextRecipeBtn;
             case 3: return this.recipeResultPreview;
@@ -137,17 +136,17 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
     public void switchSelectedRecipeIndex(FureamScreenInventory inv, int recipeIndex) {
         ItemStack toFind = inv.data.recipeOverridingInput;
         FurnaceType type = inv.furnaceType;
-        if (toFind == null || toFind.getType().isAir()) {
+        if (toFind.getType().isAir()) {
             this.selectedRecipeIndex = 0;
             this.prevRecipeBtn = makeTooltipItem(
                 new ItemStack(this.prevRecipeItem, 1),
-                config != null ? config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
-                config != null ? config.getGuiPrevRecipeEmptyItemTooltip().get(type) : "Please insert an item into the slot on the left to adjust"
+                    this.config != null ? this.config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
+                    this.config != null ? this.config.getGuiPrevRecipeEmptyItemTooltip().get(type) : "Please insert an item into the slot on the left to adjust"
             );
             this.nextRecipeBtn = makeTooltipItem(
                 new ItemStack(this.nextRecipeItem, 1),
-                config != null ? config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
-                config != null ? config.getGuiNextRecipeEmptyItemTooltip().get(type) : "Please insert an item into the slot on the left to adjust"
+                    this.config != null ? this.config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
+                    this.config != null ? this.config.getGuiNextRecipeEmptyItemTooltip().get(type) : "Please insert an item into the slot on the left to adjust"
             );
             this.recipeResultPreview = new ItemStack(Material.AIR);
             return;
@@ -159,13 +158,13 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
             inv.data.overriddenRecipes.put(new KeyableItemStack(toFind), recipe.getKey());
             this.prevRecipeBtn = makeTooltipItem(
                 new ItemStack(this.prevRecipeItem, 1),
-                config != null ? config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
-                String.format(config != null ? config.getGuiPrevRecipeItemTooltip().get(type) : "Current: %d / %d", recipeIndex, size)
+                    this.config != null ? this.config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
+                String.format(this.config != null ? this.config.getGuiPrevRecipeItemTooltip().get(type) : "Current: %d / %d", recipeIndex, size)
             );
             this.nextRecipeBtn = makeTooltipItem(
                 new ItemStack(this.nextRecipeItem, 1),
-                config != null ? config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
-                String.format(config != null ? config.getGuiNextRecipeItemTooltip().get(type) : "Current: %d / %d", recipeIndex, size)
+                    this.config != null ? this.config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
+                String.format(this.config != null ? this.config.getGuiNextRecipeItemTooltip().get(type) : "Current: %d / %d", recipeIndex, size)
             );
             this.recipeResultPreview = recipe.getResult().clone();
         } else {
@@ -173,28 +172,28 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
             inv.data.overriddenRecipes.remove(new KeyableItemStack(toFind));
             this.prevRecipeBtn = makeTooltipItem(
                 new ItemStack(this.prevRecipeItem, 1),
-                config != null ? config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
-                String.format(config != null ? config.getGuiPrevRecipeArbitraryItemTooltip().get(type) : "Current: arbitrary of %d", size)
+                    this.config != null ? this.config.getGuiPrevRecipeItemTitle().get(type) : "Previous Recipe",
+                String.format(this.config != null ? this.config.getGuiPrevRecipeArbitraryItemTooltip().get(type) : "Current: arbitrary of %d", size)
             );
             this.nextRecipeBtn = makeTooltipItem(
                 new ItemStack(this.nextRecipeItem, 1),
-                config != null ? config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
-                String.format(config != null ? config.getGuiNextRecipeArbitraryItemTooltip().get(type) : "Current: arbitrary of %d", size)
+                    this.config != null ? this.config.getGuiNextRecipeItemTitle().get(type) : "Next Recipe",
+                String.format(this.config != null ? this.config.getGuiNextRecipeArbitraryItemTooltip().get(type) : "Current: arbitrary of %d", size)
             );
-            CookingRecipe<?> recipe = FureamFurnaceLogic.findRecipe(displayWorld(inv), toFind, inv.furnaceType).orElse(null);
+            CookingRecipe<?> recipe = FureamFurnaceLogic.findRecipe(this.displayWorld(inv), toFind, inv.furnaceType).orElse(null);
             this.recipeResultPreview = recipe != null ? recipe.getResult().clone() : new ItemStack(Material.AIR);
         }
     }
 
     private org.bukkit.World displayWorld(FureamScreenInventory inv) {
-        return inv.location != null ? inv.location.getWorld() : null;
+        return inv.location.getWorld();
     }
 
     public void updateMatchingRecipes(FureamScreenInventory inv) {
         this.currentMatchingRecipes.clear();
         ItemStack toFind = inv.data.recipeOverridingInput;
-        if (toFind != null && !toFind.getType().isAir()) {
-            List<CookingRecipe<?>> matches = FureamFurnaceLogic.findAllMatches(displayWorld(inv), toFind, inv.furnaceType);
+        if (!toFind.getType().isAir()) {
+            List<CookingRecipe<?>> matches = FureamFurnaceLogic.findAllMatches(this.displayWorld(inv), toFind, inv.furnaceType);
             matches.sort(Comparator.comparing(r -> r.getKey().toString()));
             this.currentMatchingRecipes.addAll(matches);
         }
@@ -203,7 +202,7 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
     public void updateRecipeSettingArea(FureamScreenInventory inv) {
         this.updateMatchingRecipes(inv);
         ItemStack toFind = inv.data.recipeOverridingInput;
-        if (toFind == null || toFind.getType().isAir()) {
+        if (toFind.getType().isAir()) {
             this.switchSelectedRecipeIndex(inv, 0);
         } else {
             NamespacedKey overridden = inv.data.overriddenRecipes.get(new KeyableItemStack(toFind));
@@ -230,10 +229,10 @@ public class RecipeSettingAndXpFunctionalArea implements FureamFunctionalArea {
             this.cachedXp = inv.data.experience;
             FurnaceType type = inv.furnaceType;
             String title = ((int) inv.data.experience > 0) ?
-                (config != null ? config.getGuiXpIndicatorGainableItemTitle().get(type) : "XP (click to gain)") :
-                (config != null ? config.getGuiXpIndicatorItemTitle().get(type) : "XP");
+                (this.config != null ? this.config.getGuiXpIndicatorGainableItemTitle().get(type) : "XP (click to gain)") :
+                (this.config != null ? this.config.getGuiXpIndicatorItemTitle().get(type) : "XP");
             String tooltip = String.format(
-                config != null ? config.getGuiXpIndicatorItemTooltip().get(type) : "Current: %.1f",
+                    this.config != null ? this.config.getGuiXpIndicatorItemTooltip().get(type) : "Current: %.1f",
                 this.cachedXp
             );
             this.xpIndicator = makeTooltipItem(new ItemStack(this.xpIndicatorItem, 1), title, tooltip);

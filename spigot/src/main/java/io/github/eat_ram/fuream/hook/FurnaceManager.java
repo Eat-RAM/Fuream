@@ -293,7 +293,7 @@ public class FurnaceManager {
         // 1. Try pulling from outputs first
         for (int i = 0; i < ctx.data.outputs.size(); i++) {
             ItemStack outStack = ctx.data.outputs.get(i);
-            if (outStack != null && !outStack.getType().isAir() && outStack.getAmount() > 0) {
+            if (!outStack.getType().isAir() && outStack.getAmount() > 0) {
                 ItemStack single = outStack.clone();
                 single.setAmount(1);
 
@@ -315,7 +315,7 @@ public class FurnaceManager {
         // 2. Try pulling empty buckets or water buckets from fuels
         for (int i = 0; i < ctx.data.fuels.size(); i++) {
             ItemStack fuelStack = ctx.data.fuels.get(i);
-            if (fuelStack != null && (fuelStack.getType() == Material.BUCKET || fuelStack.getType() == Material.WATER_BUCKET)) {
+            if (fuelStack.getType() == Material.BUCKET || fuelStack.getType() == Material.WATER_BUCKET) {
                 ItemStack single = fuelStack.clone();
                 single.setAmount(1);
 

@@ -1,7 +1,6 @@
 package io.github.eat_ram.fuream.logic;
 
 import java.util.List;
-import java.util.Map;
 
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
@@ -90,7 +89,7 @@ public abstract class FureamFurnaceEngine {
         ItemStack inputStack = null;
         for (int i = 0; i < data.inputs.size(); i++) {
             ItemStack s = data.inputs.get(i);
-            if (s != null && !s.getType().isAir() && s.getAmount() > 0) {
+            if (!s.getType().isAir() && s.getAmount() > 0) {
                 firstInputIdx = i;
                 inputStack = s;
                 break;
@@ -106,7 +105,7 @@ public abstract class FureamFurnaceEngine {
         ItemStack recipeResult = null;
         int outSlotIdx = -1;
 
-        if (matchedRecipe != null && inputStack != null) {
+        if (matchedRecipe != null) {
             recipeResult = matchedRecipe.getResult();
             outSlotIdx = findFittingOutputSlot(data.outputs, recipeResult);
             if (outSlotIdx >= 0) {
@@ -120,14 +119,14 @@ public abstract class FureamFurnaceEngine {
             ItemStack fuelStack = null;
             for (int i = 0; i < data.fuels.size(); i++) {
                 ItemStack s = data.fuels.get(i);
-                if (s != null && !s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
+                if (!s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
                     firstFuelIdx = i;
                     fuelStack = s;
                     break;
                 }
             }
 
-            if (fuelStack != null && firstFuelIdx >= 0) {
+            if (fuelStack != null) {
                 int baseFuelTime = FuelTable.getFuelTime(fuelStack);
                 double fuelUpgradeFactor = ctx.getFuelUpgradeFactor();
                 int fuelTime = (int) Math.round(baseFuelTime * fuelUpgradeFactor);
@@ -149,7 +148,7 @@ public abstract class FureamFurnaceEngine {
         }
 
         // Cook progression
-        if (ctx.burnTime > 0 && canSmelt && matchedRecipe != null && inputStack != null && recipeResult != null && outSlotIdx >= 0) {
+        if (ctx.burnTime > 0 && canSmelt) {
             ctx.cookTime++;
             ctx.dirty = true;
 
@@ -158,7 +157,7 @@ public abstract class FureamFurnaceEngine {
 
                 // Deposit result
                 ItemStack currentOut = data.outputs.get(outSlotIdx);
-                if (currentOut == null || currentOut.getType().isAir()) {
+                if (currentOut.getType().isAir()) {
                     data.outputs.set(outSlotIdx, recipeResult.clone());
                 } else if (currentOut.isSimilar(recipeResult)) {
                     currentOut.setAmount(currentOut.getAmount() + recipeResult.getAmount());
@@ -172,7 +171,7 @@ public abstract class FureamFurnaceEngine {
                 if (inputStack.getType() == Material.WET_SPONGE) {
                     for (int i = 0; i < data.fuels.size(); i++) {
                         ItemStack f = data.fuels.get(i);
-                        if (f != null && f.getType() == Material.BUCKET) {
+                        if (f.getType() == Material.BUCKET) {
                             f.setAmount(f.getAmount() - 1);
                             if (f.getAmount() <= 0) {
                                 data.fuels.set(i, new ItemStack(Material.WATER_BUCKET));
@@ -199,7 +198,7 @@ public abstract class FureamFurnaceEngine {
                         ItemStack nextFuelStack = null;
                         for (int i = 0; i < data.fuels.size(); i++) {
                             ItemStack s = data.fuels.get(i);
-                            if (s != null && !s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
+                            if (!s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
                                 nextFuelIdx = i;
                                 nextFuelStack = s;
                                 break;

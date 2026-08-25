@@ -1,7 +1,6 @@
 package io.github.eat_ram.fuream;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.util.Locale;
 import java.util.Map;
 import java.util.WeakHashMap;
@@ -48,19 +47,19 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
     public void onEnable() {
         INSTANCE = this;
 
-        if (!getServer().getPluginManager().isPluginEnabled("NBTAPI")) {
-            getLogger().severe("Item-NBT-API is required for Fuream to operate! Please install NBT-API plugin.");
-            getServer().getPluginManager().disablePlugin(this);
+        if (!this.getServer().getPluginManager().isPluginEnabled("NBTAPI")) {
+            this.getLogger().severe("Item-NBT-API is required for Fuream to operate! Please install NBT-API plugin.");
+            this.getServer().getPluginManager().disablePlugin(this);
             return;
         }
 
         // Register listeners
-        getServer().getPluginManager().registerEvents(this, this);
-        getServer().getPluginManager().registerEvents(new FurnaceOpenListener(), this);
-        getServer().getPluginManager().registerEvents(new GuiListener(), this);
-        getServer().getPluginManager().registerEvents(new HopperListener(), this);
-        getServer().getPluginManager().registerEvents(new BlockBreakListener(), this);
-        getServer().getPluginManager().registerEvents(new ChunkListener(), this);
+        this.getServer().getPluginManager().registerEvents(this, this);
+        this.getServer().getPluginManager().registerEvents(new FurnaceOpenListener(), this);
+        this.getServer().getPluginManager().registerEvents(new GuiListener(), this);
+        this.getServer().getPluginManager().registerEvents(new HopperListener(), this);
+        this.getServer().getPluginManager().registerEvents(new BlockBreakListener(), this);
+        this.getServer().getPluginManager().registerEvents(new ChunkListener(), this);
 
         // Load configs and scan loaded chunks for existing furnaces
         for (World world : Bukkit.getWorlds()) {
@@ -78,18 +77,18 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
         Bukkit.getScheduler().runTaskTimer(this, FurnaceManager::tickAll, 1L, 1L);
 
         // Register command
-        if (getCommand("fuream") != null) {
-            getCommand("fuream").setExecutor(this);
+        if (this.getCommand("fuream") != null) {
+            this.getCommand("fuream").setExecutor(this);
         }
 
-        getLogger().info("Fuream (Spigot) enabled successfully!");
+        this.getLogger().info("Fuream (Spigot) enabled successfully!");
     }
 
     @Override
     public void onDisable() {
         FurnaceManager.flushAll();
         FurnaceManager.CONTEXTS.clear();
-        getLogger().info("Fuream (Spigot) disabled successfully!");
+        this.getLogger().info("Fuream (Spigot) disabled successfully!");
     }
 
     @EventHandler

@@ -48,13 +48,13 @@ public class FureamFurnaceData implements FureamData {
     public boolean hasAny() {
         if (this.experience > 0f) return true;
         for (ItemStack s : this.inputs) {
-            if (s != null && !s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!s.getType().isAir() && s.getAmount() > 0) return true;
         }
         for (ItemStack s : this.fuels) {
-            if (s != null && !s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!s.getType().isAir() && s.getAmount() > 0) return true;
         }
         for (ItemStack s : this.outputs) {
-            if (s != null && !s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!s.getType().isAir() && s.getAmount() > 0) return true;
         }
         return false;
     }
@@ -80,7 +80,7 @@ public class FureamFurnaceData implements FureamData {
             ReadWriteNBTCompoundList list = nbt.getCompoundList(OVERRIDDEN_RECIPES_KEY);
             for (Map.Entry<KeyableItemStack, NamespacedKey> entry : this.overriddenRecipes.entrySet()) {
                 ItemStack stack = entry.getKey().stack;
-                if (stack != null && !stack.getType().isAir()) {
+                if (!stack.getType().isAir()) {
                     ReadWriteNBT sub = list.addCompound();
                     ReadWriteNBT itemNbt = NBT.itemStackToNBT(stack);
                     sub.mergeCompound(itemNbt);

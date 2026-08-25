@@ -1,0 +1,54 @@
+package io.github.eat_ram.fuream.hook;
+
+import io.github.eat_ram.fuream.FureamMain;
+import io.github.eat_ram.fuream.api.FureamWorldConfig;
+import io.github.eat_ram.fuream.api.FurnaceType;
+import io.github.eat_ram.fuream.logic.FureamFurnaceLogic;
+import io.github.eat_ram.fuream.logic.FuelTable;
+import org.bukkit.Location;
+import org.bukkit.Material;
+import org.bukkit.block.Block;
+import org.bukkit.event.EventHandler;
+import org.bukkit.event.EventPriority;
+import org.bukkit.event.Listener;
+import org.bukkit.event.inventory.InventoryMoveItemEvent;
+import org.bukkit.inventory.FurnaceInventory;
+import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.ItemStack;
+
+public class HopperListener implements Listener {
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
+    public void onInventoryMoveItem(InventoryMoveItemEvent event) {
+        Inventory dest = event.getDestination();
+        Inventory src = event.getSource();
+
+        // Hopper pushing INTO Furnace
+        if (dest instanceof FurnaceInventory && dest.getLocation() != null) {
+            Location furnaceLoc = dest.getLocation();
+            Block block = furnaceLoc.getBlock();
+            FurnaceType type = FureamMain.getFurnaceType(block);
+            if (type != null) {
+                FureamWorldConfig config = FureamMain.getWorldConfig(furnaceLoc.getWorld());
+                if (config != null && config.getEnabledFurnaceTypes().contains(type)) {
+                    Location srcLoc = src.getLocation();
+                    ItemStack itemToMove = event.getItem();
+                    boolean isTop = srcLoc != null && srcLoc.getBlockY() > furnaceLoc.getBlockY();
+
+                    if (isTop) {
+                        // Top Hopper -> Inputs: Filter non-smeltables if configured
+                        if (config.getPreventsHopperInsertNonSmeltable().contains(type)) {
+                            if (!FureamFurnaceLogic.isAcceptableInput(furnaceLoc.getWorld(), itemToMove, type)) {
+                                event.setCancelled(true);
+                            }
+                        }
+                    } else {
+                        // Side Hopper -> Fuels: Filter non-fuel items
+                        if (!FuelTable.isFuel(itemToMove) && itemToMove.getType() != Material.BUCKET) {
+                            event.setCancelled(true);
+                        }
+                    }
+                }
+            }
+        }
+    }
+}

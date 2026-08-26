@@ -46,9 +46,9 @@ public class FurnaceManager {
         public final @NotNull Map<@NotNull String, @NotNull FureamData> extraData = new HashMap<>();
 
         public int burnTime;
-        public int fuelTimeTotal = 200;
+        public int fuelTimeTotal;
         public int cookTime;
-        public int cookTimeTotal = 200;
+        public int cookTimeTotal;
 
         public @Nullable FureamScreenInventory activeGui;
         public @Nullable FureamScreenHandler handler;
@@ -58,6 +58,8 @@ public class FurnaceManager {
             this.pos = pos;
             this.type = type;
             this.data = new FureamFurnaceData();
+            this.cookTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
+            this.fuelTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
         }
 
         public @Nullable World getWorld() {

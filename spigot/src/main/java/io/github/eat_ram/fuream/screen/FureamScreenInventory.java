@@ -110,7 +110,17 @@ public class FureamScreenInventory {
         String title = type == FurnaceType.SMOKER ? "Smoker" : (type == FurnaceType.BLAST_FURNACE ? "Blast Furnace" : "Furnace");
         this.bukkitInventory = Bukkit.createInventory(null, 54, title);
 
-        this.cookTimeTotal = this.computeCookTimeTotal();
+        FurnacePos pos = new FurnacePos(this.location);
+        FurnaceContext ctx = FurnaceManager.CONTEXTS.get(pos);
+        if (ctx != null) {
+            this.burnTime = ctx.burnTime;
+            this.fuelTimeTotal = Math.max(1, ctx.fuelTimeTotal);
+            this.cookTime = ctx.cookTime;
+            this.cookTimeTotal = Math.max(1, ctx.cookTimeTotal);
+        } else {
+            this.cookTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
+            this.fuelTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
+        }
         this.switchPage(0);
         for (BiFunction<
             ? super FureamScreenInventory, ? super FureamWorldConfig,

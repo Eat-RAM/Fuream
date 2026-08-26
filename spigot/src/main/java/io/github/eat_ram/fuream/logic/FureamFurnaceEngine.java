@@ -111,6 +111,11 @@ public abstract class FureamFurnaceEngine {
             outSlotIdx = findFittingOutputSlot(data.outputs, recipeResult);
             if (outSlotIdx >= 0) {
                 canSmelt = true;
+                int cookTime = matchedRecipe.getCookingTime();
+                if (cookTime <= 0) {
+                    cookTime = (ctx.type == FurnaceType.FURNACE ? 200 : 100);
+                }
+                ctx.cookTimeTotal = cookTime;
             }
         }
 
@@ -129,6 +134,9 @@ public abstract class FureamFurnaceEngine {
 
             if (fuelStack != null) {
                 int fuelTime = FuelTable.getFuelTime(fuelStack);
+                if (ctx.type == FurnaceType.SMOKER || ctx.type == FurnaceType.BLAST_FURNACE) {
+                    fuelTime = Math.max(1, fuelTime / 2);
+                }
 
                 ctx.burnTime = fuelTime;
                 ctx.fuelTimeTotal = fuelTime;

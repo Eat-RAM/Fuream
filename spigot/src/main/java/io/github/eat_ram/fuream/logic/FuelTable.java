@@ -5,6 +5,7 @@ import java.lang.reflect.Modifier;
 import java.util.EnumMap;
 import java.util.Map;
 
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.Nullable;
@@ -19,8 +20,9 @@ public abstract class FuelTable {
 
     public static void initDynamic() {
         try {
-            // Dynamically synchronize with official server fuel registry if available
-            Class<?> furnaceClass = Class.forName("net.minecraft.world.level.block.entity.TileEntityFurnace");
+            Class<?> furnaceClass = getFurnaceNmsClass();
+            if (furnaceClass == null) return;
+
             Method getFuelMethod = null;
             for (Method m : furnaceClass.getDeclaredMethods()) {
                 if (Modifier.isStatic(m.getModifiers()) && Map.class.isAssignableFrom(m.getReturnType()) && m.getParameterCount() == 0) {
@@ -28,17 +30,29 @@ public abstract class FuelTable {
                     break;
                 }
             }
-            if (getFuelMethod != null) {
-                getFuelMethod.setAccessible(true);
-                Map<?, Integer> nmsFuelMap = (Map<?, Integer>) getFuelMethod.invoke(null);
-                if (nmsFuelMap != null && !nmsFuelMap.isEmpty()) {
-                    Class<?> craftItemClass = Class.forName("org.bukkit.craftbukkit.v1_20_R1.util.CraftMagicNumbers");
-                    Method getMaterialMethod = craftItemClass.getMethod("getMaterial", Class.forName("net.minecraft.world.item.Item"));
-                    for (Map.Entry<?, Integer> entry : nmsFuelMap.entrySet()) {
-                        Material mat = (Material) getMaterialMethod.invoke(null, entry.getKey());
-                        if (mat != null && entry.getValue() != null && entry.getValue() > 0) {
-                            FUEL_TIMES.put(mat, entry.getValue());
-                        }
+            if (getFuelMethod == null) return;
+
+            getFuelMethod.setAccessible(true);
+            Map<?, Integer> nmsFuelMap = (Map<?, Integer>) getFuelMethod.invoke(null);
+            if (nmsFuelMap == null || nmsFuelMap.isEmpty()) return;
+
+            Class<?> craftMagicClass = getCraftMagicNumbersClass();
+            if (craftMagicClass == null) return;
+
+            Method getMaterialMethod = null;
+            for (Method m : craftMagicClass.getMethods()) {
+                if (m.getName().equals("getMaterial") && m.getParameterCount() == 1 && m.getReturnType() == Material.class) {
+                    getMaterialMethod = m;
+                    break;
+                }
+            }
+            if (getMaterialMethod == null) return;
+
+            for (Map.Entry<?, Integer> entry : nmsFuelMap.entrySet()) {
+                if (entry.getKey() != null && entry.getValue() != null && entry.getValue() > 0) {
+                    Material mat = (Material) getMaterialMethod.invoke(null, entry.getKey());
+                    if (mat != null) {
+                        FUEL_TIMES.put(mat, entry.getValue());
                     }
                 }
             }
@@ -47,120 +61,163 @@ public abstract class FuelTable {
         }
     }
 
+    private static @Nullable Class<?> getFurnaceNmsClass() {
+        String serverPkg = Bukkit.getServer() != null ? Bukkit.getServer().getClass().getPackage().getName() : "";
+        String[] candidates = {
+            "net.minecraft.world.level.block.entity.TileEntityFurnace",
+            "net.minecraft.world.level.block.entity.AbstractFurnaceBlockEntity",
+            serverPkg + ".block.entity.TileEntityFurnace",
+            serverPkg.replace("org.bukkit.craftbukkit", "net.minecraft.server") + ".TileEntityFurnace"
+        };
+        for (String c : candidates) {
+            try {
+                return Class.forName(c);
+            } catch (ClassNotFoundException ignored) {}
+        }
+        return null;
+    }
+
+    private static @Nullable Class<?> getCraftMagicNumbersClass() {
+        String serverPkg = Bukkit.getServer() != null ? Bukkit.getServer().getClass().getPackage().getName() : "";
+        String[] candidates = {
+            serverPkg + ".util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_20_R1.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_20_R2.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_20_R3.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_19_R3.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_18_R2.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_17_R1.util.CraftMagicNumbers",
+            "org.bukkit.craftbukkit.v1_16_R3.util.CraftMagicNumbers"
+        };
+        for (String c : candidates) {
+            try {
+                return Class.forName(c);
+            } catch (ClassNotFoundException ignored) {}
+        }
+        return null;
+    }
+
+    private static void safePut(String materialName, int ticks) {
+        Material mat = Material.matchMaterial(materialName);
+        if (mat != null) {
+            FUEL_TIMES.put(mat, ticks);
+        }
+    }
+
+    private static void safePutAll(String[] names, int ticks) {
+        for (String n : names) {
+            safePut(n, ticks);
+        }
+    }
+
     private static void loadDefaults() {
         // High tier
-        FUEL_TIMES.put(Material.LAVA_BUCKET, 20000);
-        FUEL_TIMES.put(Material.COAL_BLOCK, 16000);
-        FUEL_TIMES.put(Material.DRIED_KELP_BLOCK, 4000);
-        FUEL_TIMES.put(Material.BLAZE_ROD, 2400);
-        FUEL_TIMES.put(Material.COAL, 1600);
-        FUEL_TIMES.put(Material.CHARCOAL, 1600);
+        safePut("LAVA_BUCKET", 20000);
+        safePut("COAL_BLOCK", 16000);
+        safePut("DRIED_KELP_BLOCK", 4000);
+        safePut("BLAZE_ROD", 2400);
+        safePut("COAL", 1600);
+        safePut("CHARCOAL", 1600);
 
-        // Boats
-        Material[] boats = {
-            Material.OAK_BOAT, Material.SPRUCE_BOAT, Material.BIRCH_BOAT, Material.JUNGLE_BOAT,
-            Material.ACACIA_BOAT, Material.DARK_OAK_BOAT, Material.MANGROVE_BOAT, Material.CHERRY_BOAT,
-            Material.BAMBOO_RAFT,
-            Material.OAK_CHEST_BOAT, Material.SPRUCE_CHEST_BOAT, Material.BIRCH_CHEST_BOAT, Material.JUNGLE_CHEST_BOAT,
-            Material.ACACIA_CHEST_BOAT, Material.DARK_OAK_CHEST_BOAT, Material.MANGROVE_CHEST_BOAT, Material.CHERRY_CHEST_BOAT,
-            Material.BAMBOO_CHEST_RAFT
-        };
-        for (Material m : boats) FUEL_TIMES.put(m, 1200);
+        // Boats & Rafts
+        safePutAll(new String[]{
+            "OAK_BOAT", "SPRUCE_BOAT", "BIRCH_BOAT", "JUNGLE_BOAT",
+            "ACACIA_BOAT", "DARK_OAK_BOAT", "MANGROVE_BOAT", "CHERRY_BOAT",
+            "BAMBOO_RAFT",
+            "OAK_CHEST_BOAT", "SPRUCE_CHEST_BOAT", "BIRCH_CHEST_BOAT", "JUNGLE_CHEST_BOAT",
+            "ACACIA_CHEST_BOAT", "DARK_OAK_CHEST_BOAT", "MANGROVE_CHEST_BOAT", "CHERRY_CHEST_BOAT",
+            "BAMBOO_CHEST_RAFT"
+        }, 1200);
 
         // Standard wood items (300 ticks)
-        Material[] woods300 = {
+        safePutAll(new String[]{
             // Logs
-            Material.OAK_LOG, Material.SPRUCE_LOG, Material.BIRCH_LOG, Material.JUNGLE_LOG,
-            Material.ACACIA_LOG, Material.DARK_OAK_LOG, Material.MANGROVE_LOG, Material.CHERRY_LOG,
-            Material.STRIPPED_OAK_LOG, Material.STRIPPED_SPRUCE_LOG, Material.STRIPPED_BIRCH_LOG, Material.STRIPPED_JUNGLE_LOG,
-            Material.STRIPPED_ACACIA_LOG, Material.STRIPPED_DARK_OAK_LOG, Material.STRIPPED_MANGROVE_LOG, Material.STRIPPED_CHERRY_LOG,
+            "OAK_LOG", "SPRUCE_LOG", "BIRCH_LOG", "JUNGLE_LOG",
+            "ACACIA_LOG", "DARK_OAK_LOG", "MANGROVE_LOG", "CHERRY_LOG",
+            "STRIPPED_OAK_LOG", "STRIPPED_SPRUCE_LOG", "STRIPPED_BIRCH_LOG", "STRIPPED_JUNGLE_LOG",
+            "STRIPPED_ACACIA_LOG", "STRIPPED_DARK_OAK_LOG", "STRIPPED_MANGROVE_LOG", "STRIPPED_CHERRY_LOG",
             // Woods
-            Material.OAK_WOOD, Material.SPRUCE_WOOD, Material.BIRCH_WOOD, Material.JUNGLE_WOOD,
-            Material.ACACIA_WOOD, Material.DARK_OAK_WOOD, Material.MANGROVE_WOOD, Material.CHERRY_WOOD,
-            Material.STRIPPED_OAK_WOOD, Material.STRIPPED_SPRUCE_WOOD, Material.STRIPPED_BIRCH_WOOD, Material.STRIPPED_JUNGLE_WOOD,
-            Material.STRIPPED_ACACIA_WOOD, Material.STRIPPED_DARK_OAK_WOOD, Material.STRIPPED_MANGROVE_WOOD, Material.STRIPPED_CHERRY_WOOD,
+            "OAK_WOOD", "SPRUCE_WOOD", "BIRCH_WOOD", "JUNGLE_WOOD",
+            "ACACIA_WOOD", "DARK_OAK_WOOD", "MANGROVE_WOOD", "CHERRY_WOOD",
+            "STRIPPED_OAK_WOOD", "STRIPPED_SPRUCE_WOOD", "STRIPPED_BIRCH_WOOD", "STRIPPED_JUNGLE_WOOD",
+            "STRIPPED_ACACIA_WOOD", "STRIPPED_DARK_OAK_WOOD", "STRIPPED_MANGROVE_WOOD", "STRIPPED_CHERRY_WOOD",
             // Planks
-            Material.OAK_PLANKS, Material.SPRUCE_PLANKS, Material.BIRCH_PLANKS, Material.JUNGLE_PLANKS,
-            Material.ACACIA_PLANKS, Material.DARK_OAK_PLANKS, Material.MANGROVE_PLANKS, Material.CHERRY_PLANKS,
-            Material.BAMBOO_PLANKS, Material.BAMBOO_MOSAIC,
+            "OAK_PLANKS", "SPRUCE_PLANKS", "BIRCH_PLANKS", "JUNGLE_PLANKS",
+            "ACACIA_PLANKS", "DARK_OAK_PLANKS", "MANGROVE_PLANKS", "CHERRY_PLANKS",
+            "BAMBOO_PLANKS", "BAMBOO_MOSAIC",
             // Stairs
-            Material.OAK_STAIRS, Material.SPRUCE_STAIRS, Material.BIRCH_STAIRS, Material.JUNGLE_STAIRS,
-            Material.ACACIA_STAIRS, Material.DARK_OAK_STAIRS, Material.MANGROVE_STAIRS, Material.CHERRY_STAIRS,
-            Material.BAMBOO_STAIRS, Material.BAMBOO_MOSAIC_STAIRS,
+            "OAK_STAIRS", "SPRUCE_STAIRS", "BIRCH_STAIRS", "JUNGLE_STAIRS",
+            "ACACIA_STAIRS", "DARK_OAK_STAIRS", "MANGROVE_STAIRS", "CHERRY_STAIRS",
+            "BAMBOO_STAIRS", "BAMBOO_MOSAIC_STAIRS",
             // Fences & Gates
-            Material.OAK_FENCE, Material.SPRUCE_FENCE, Material.BIRCH_FENCE, Material.JUNGLE_FENCE,
-            Material.ACACIA_FENCE, Material.DARK_OAK_FENCE, Material.MANGROVE_FENCE, Material.CHERRY_FENCE, Material.BAMBOO_FENCE,
-            Material.OAK_FENCE_GATE, Material.SPRUCE_FENCE_GATE, Material.BIRCH_FENCE_GATE, Material.JUNGLE_FENCE_GATE,
-            Material.ACACIA_FENCE_GATE, Material.DARK_OAK_FENCE_GATE, Material.MANGROVE_FENCE_GATE, Material.CHERRY_FENCE_GATE, Material.BAMBOO_FENCE_GATE,
+            "OAK_FENCE", "SPRUCE_FENCE", "BIRCH_FENCE", "JUNGLE_FENCE",
+            "ACACIA_FENCE", "DARK_OAK_FENCE", "MANGROVE_FENCE", "CHERRY_FENCE", "BAMBOO_FENCE",
+            "OAK_FENCE_GATE", "SPRUCE_FENCE_GATE", "BIRCH_FENCE_GATE", "JUNGLE_FENCE_GATE",
+            "ACACIA_FENCE_GATE", "DARK_OAK_FENCE_GATE", "MANGROVE_FENCE_GATE", "CHERRY_FENCE_GATE", "BAMBOO_FENCE_GATE",
             // Doors & Trapdoors
-            Material.OAK_DOOR, Material.SPRUCE_DOOR, Material.BIRCH_DOOR, Material.JUNGLE_DOOR,
-            Material.ACACIA_DOOR, Material.DARK_OAK_DOOR, Material.MANGROVE_DOOR, Material.CHERRY_DOOR, Material.BAMBOO_DOOR,
-            Material.OAK_TRAPDOOR, Material.SPRUCE_TRAPDOOR, Material.BIRCH_TRAPDOOR, Material.JUNGLE_TRAPDOOR,
-            Material.ACACIA_TRAPDOOR, Material.DARK_OAK_TRAPDOOR, Material.MANGROVE_TRAPDOOR, Material.CHERRY_TRAPDOOR, Material.BAMBOO_TRAPDOOR,
+            "OAK_DOOR", "SPRUCE_DOOR", "BIRCH_DOOR", "JUNGLE_DOOR",
+            "ACACIA_DOOR", "DARK_OAK_DOOR", "MANGROVE_DOOR", "CHERRY_DOOR", "BAMBOO_DOOR",
+            "OAK_TRAPDOOR", "SPRUCE_TRAPDOOR", "BIRCH_TRAPDOOR", "JUNGLE_TRAPDOOR",
+            "ACACIA_TRAPDOOR", "DARK_OAK_TRAPDOOR", "MANGROVE_TRAPDOOR", "CHERRY_TRAPDOOR", "BAMBOO_TRAPDOOR",
             // Pressure plates & Buttons
-            Material.OAK_PRESSURE_PLATE, Material.SPRUCE_PRESSURE_PLATE, Material.BIRCH_PRESSURE_PLATE, Material.JUNGLE_PRESSURE_PLATE,
-            Material.ACACIA_PRESSURE_PLATE, Material.DARK_OAK_PRESSURE_PLATE, Material.MANGROVE_PRESSURE_PLATE, Material.CHERRY_PRESSURE_PLATE,
-            Material.BAMBOO_PRESSURE_PLATE,
+            "OAK_PRESSURE_PLATE", "SPRUCE_PRESSURE_PLATE", "BIRCH_PRESSURE_PLATE", "JUNGLE_PRESSURE_PLATE",
+            "ACACIA_PRESSURE_PLATE", "DARK_OAK_PRESSURE_PLATE", "MANGROVE_PRESSURE_PLATE", "CHERRY_PRESSURE_PLATE",
+            "BAMBOO_PRESSURE_PLATE",
+            "OAK_BUTTON", "SPRUCE_BUTTON", "BIRCH_BUTTON", "JUNGLE_BUTTON",
+            "ACACIA_BUTTON", "DARK_OAK_BUTTON", "MANGROVE_BUTTON", "CHERRY_BUTTON",
+            "BAMBOO_BUTTON",
             // Signs & Hanging Signs
-            Material.OAK_SIGN, Material.SPRUCE_SIGN, Material.BIRCH_SIGN, Material.JUNGLE_SIGN,
-            Material.ACACIA_SIGN, Material.DARK_OAK_SIGN, Material.MANGROVE_SIGN, Material.CHERRY_SIGN, Material.BAMBOO_SIGN,
-            Material.OAK_HANGING_SIGN, Material.SPRUCE_HANGING_SIGN, Material.BIRCH_HANGING_SIGN, Material.JUNGLE_HANGING_SIGN,
-            Material.ACACIA_HANGING_SIGN, Material.DARK_OAK_HANGING_SIGN, Material.MANGROVE_HANGING_SIGN, Material.CHERRY_HANGING_SIGN, Material.BAMBOO_HANGING_SIGN,
-            // Blocks
-            Material.CRAFTING_TABLE, Material.BOOKSHELF, Material.CHISELED_BOOKSHELF, Material.CHEST, Material.TRAPPED_CHEST,
-            Material.BARREL, Material.DAYLIGHT_DETECTOR, Material.JUKEBOX, Material.NOTE_BLOCK, Material.COMPOSTER,
-            Material.LOOM, Material.FLETCHING_TABLE, Material.CARTOGRAPHY_TABLE, Material.SMITHING_TABLE, Material.LECTERN,
-            Material.BEEHIVE,
+            "OAK_SIGN", "SPRUCE_SIGN", "BIRCH_SIGN", "JUNGLE_SIGN",
+            "ACACIA_SIGN", "DARK_OAK_SIGN", "MANGROVE_SIGN", "CHERRY_SIGN", "BAMBOO_SIGN",
+            "OAK_HANGING_SIGN", "SPRUCE_HANGING_SIGN", "BIRCH_HANGING_SIGN", "JUNGLE_HANGING_SIGN",
+            "ACACIA_HANGING_SIGN", "DARK_OAK_HANGING_SIGN", "MANGROVE_HANGING_SIGN", "CHERRY_HANGING_SIGN", "BAMBOO_HANGING_SIGN",
+            // Utility Blocks
+            "CRAFTING_TABLE", "BOOKSHELF", "CHISELED_BOOKSHELF", "CHEST", "TRAPPED_CHEST",
+            "BARREL", "DAYLIGHT_DETECTOR", "JUKEBOX", "NOTE_BLOCK", "COMPOSTER",
+            "LOOM", "FLETCHING_TABLE", "CARTOGRAPHY_TABLE", "SMITHING_TABLE", "LECTERN",
+            "BEEHIVE",
             // Banners
-            Material.WHITE_BANNER, Material.ORANGE_BANNER, Material.MAGENTA_BANNER, Material.LIGHT_BLUE_BANNER,
-            Material.YELLOW_BANNER, Material.LIME_BANNER, Material.PINK_BANNER, Material.GRAY_BANNER,
-            Material.LIGHT_GRAY_BANNER, Material.CYAN_BANNER, Material.PURPLE_BANNER, Material.BLUE_BANNER,
-            Material.BROWN_BANNER, Material.GREEN_BANNER, Material.RED_BANNER, Material.BLACK_BANNER,
+            "WHITE_BANNER", "ORANGE_BANNER", "MAGENTA_BANNER", "LIGHT_BLUE_BANNER",
+            "YELLOW_BANNER", "LIME_BANNER", "PINK_BANNER", "GRAY_BANNER",
+            "LIGHT_GRAY_BANNER", "CYAN_BANNER", "PURPLE_BANNER", "BLUE_BANNER",
+            "BROWN_BANNER", "GREEN_BANNER", "RED_BANNER", "BLACK_BANNER",
             // Tools & Weapons
-            Material.WOODEN_AXE, Material.WOODEN_HOE, Material.WOODEN_PICKAXE, Material.WOODEN_SHOVEL, Material.WOODEN_SWORD,
-            Material.BOW, Material.CROSSBOW, Material.FISHING_ROD
-        };
-        for (Material m : woods300) FUEL_TIMES.put(m, 300);
+            "WOODEN_AXE", "WOODEN_HOE", "WOODEN_PICKAXE", "WOODEN_SHOVEL", "WOODEN_SWORD",
+            "BOW", "CROSSBOW", "FISHING_ROD"
+        }, 300);
 
         // Slabs (150 ticks)
-        Material[] slabs150 = {
-            Material.OAK_SLAB, Material.SPRUCE_SLAB, Material.BIRCH_SLAB, Material.JUNGLE_SLAB,
-            Material.ACACIA_SLAB, Material.DARK_OAK_SLAB, Material.MANGROVE_SLAB, Material.CHERRY_SLAB,
-            Material.BAMBOO_SLAB, Material.BAMBOO_MOSAIC_SLAB
-        };
-        for (Material m : slabs150) FUEL_TIMES.put(m, 150);
+        safePutAll(new String[]{
+            "OAK_SLAB", "SPRUCE_SLAB", "BIRCH_SLAB", "JUNGLE_SLAB",
+            "ACACIA_SLAB", "DARK_OAK_SLAB", "MANGROVE_SLAB", "CHERRY_SLAB",
+            "BAMBOO_SLAB", "BAMBOO_MOSAIC_SLAB"
+        }, 150);
 
         // 200 ticks
-        Material[] items200 = {
-            Material.OAK_BUTTON, Material.SPRUCE_BUTTON, Material.BIRCH_BUTTON, Material.JUNGLE_BUTTON,
-            Material.ACACIA_BUTTON, Material.DARK_OAK_BUTTON, Material.MANGROVE_BUTTON, Material.CHERRY_BUTTON,
-            Material.BAMBOO_BUTTON, Material.BOWL, Material.LADDER
-        };
-        for (Material m : items200) FUEL_TIMES.put(m, 200);
+        safePutAll(new String[]{"BOWL", "LADDER"}, 200);
 
         // 100 ticks
-        Material[] items100 = {
-            Material.STICK, Material.OAK_SAPLING, Material.SPRUCE_SAPLING, Material.BIRCH_SAPLING,
-            Material.JUNGLE_SAPLING, Material.ACACIA_SAPLING, Material.DARK_OAK_SAPLING, Material.MANGROVE_PROPAGULE,
-            Material.CHERRY_SAPLING, Material.BAMBOO, Material.AZALEA, Material.FLOWERING_AZALEA
-        };
-        for (Material m : items100) FUEL_TIMES.put(m, 100);
+        safePutAll(new String[]{
+            "STICK", "OAK_SAPLING", "SPRUCE_SAPLING", "BIRCH_SAPLING",
+            "JUNGLE_SAPLING", "ACACIA_SAPLING", "DARK_OAK_SAPLING", "MANGROVE_PROPAGULE",
+            "CHERRY_SAPLING", "BAMBOO", "AZALEA", "FLOWERING_AZALEA"
+        }, 100);
 
         // 67 ticks (wool, carpet)
-        Material[] items67 = {
-            Material.WHITE_WOOL, Material.ORANGE_WOOL, Material.MAGENTA_WOOL, Material.LIGHT_BLUE_WOOL,
-            Material.YELLOW_WOOL, Material.LIME_WOOL, Material.PINK_WOOL, Material.GRAY_WOOL,
-            Material.LIGHT_GRAY_WOOL, Material.CYAN_WOOL, Material.PURPLE_WOOL, Material.BLUE_WOOL,
-            Material.BROWN_WOOL, Material.GREEN_WOOL, Material.RED_WOOL, Material.BLACK_WOOL,
-            Material.WHITE_CARPET, Material.ORANGE_CARPET, Material.MAGENTA_CARPET, Material.LIGHT_BLUE_CARPET,
-            Material.YELLOW_CARPET, Material.LIME_CARPET, Material.PINK_CARPET, Material.GRAY_CARPET,
-            Material.LIGHT_GRAY_CARPET, Material.CYAN_CARPET, Material.PURPLE_CARPET, Material.BLUE_CARPET,
-            Material.BROWN_CARPET, Material.GREEN_CARPET, Material.RED_CARPET, Material.BLACK_CARPET
-        };
-        for (Material m : items67) FUEL_TIMES.put(m, 67);
+        safePutAll(new String[]{
+            "WHITE_WOOL", "ORANGE_WOOL", "MAGENTA_WOOL", "LIGHT_BLUE_WOOL",
+            "YELLOW_WOOL", "LIME_WOOL", "PINK_WOOL", "GRAY_WOOL",
+            "LIGHT_GRAY_WOOL", "CYAN_WOOL", "PURPLE_WOOL", "BLUE_WOOL",
+            "BROWN_WOOL", "GREEN_WOOL", "RED_WOOL", "BLACK_WOOL",
+            "WHITE_CARPET", "ORANGE_CARPET", "MAGENTA_CARPET", "LIGHT_BLUE_CARPET",
+            "YELLOW_CARPET", "LIME_CARPET", "PINK_CARPET", "GRAY_CARPET",
+            "LIGHT_GRAY_CARPET", "CYAN_CARPET", "PURPLE_CARPET", "BLUE_CARPET",
+            "BROWN_CARPET", "GREEN_CARPET", "RED_CARPET", "BLACK_CARPET"
+        }, 67);
 
         // Scaffolding (50 ticks)
-        FUEL_TIMES.put(Material.SCAFFOLDING, 50);
+        safePut("SCAFFOLDING", 50);
     }
 
     public static boolean isFuel(@Nullable ItemStack stack) {

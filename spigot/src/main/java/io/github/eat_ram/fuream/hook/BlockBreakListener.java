@@ -1,7 +1,5 @@
 package io.github.eat_ram.fuream.hook;
 
-import java.lang.reflect.Field;
-
 import io.github.eat_ram.fuream.FureamMain;
 import io.github.eat_ram.fuream.api.FurnaceType;
 import io.github.eat_ram.fuream.data.FureamData;
@@ -57,22 +55,6 @@ public class BlockBreakListener implements Listener {
         if (ctx != null) {
             Location loc = block.getLocation();
             FureamFurnaceLogic.dropOnBreak(loc, ctx.data);
-
-            // Handle extra data items (e.g. upgrades)
-            for (FureamData extra : ctx.extraData.values()) {
-                try {
-                    Field rateField = extra.getClass().getField("rateUpgradeStack");
-                    ItemStack rate = (ItemStack) rateField.get(extra);
-                    if (rate != null && !rate.getType().isAir()) {
-                        loc.getWorld().dropItemNaturally(loc, rate.clone());
-                    }
-                    Field fuelField = extra.getClass().getField("fuelUpgradeStack");
-                    ItemStack fuel = (ItemStack) fuelField.get(extra);
-                    if (fuel != null && !fuel.getType().isAir()) {
-                        loc.getWorld().dropItemNaturally(loc, fuel.clone());
-                    }
-                } catch (Exception ignored) {}
-            }
 
             if (ctx.activeGui != null) {
                 for (org.bukkit.entity.HumanEntity viewer : new java.util.ArrayList<>(ctx.activeGui.bukkitInventory.getViewers())) {

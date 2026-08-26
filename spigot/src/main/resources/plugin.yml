@@ -1,7 +1,7 @@
 name: Fuream
 version: 0.0.1
 main: io.github.eat_ram.fuream.FureamMain
-api-version: '1.20'
+api-version: '1.14'
 depend:
   - NBTAPI
 commands:

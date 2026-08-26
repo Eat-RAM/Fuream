@@ -6,6 +6,11 @@ plugins {
 group = "io.github.eat-ram.fuream-spigot"
 version = "0.0.1"
 evaluationDependsOn(":api")
+project(":api") {
+    repositories {
+        mavenCentral()
+    }
+}
 jvmdg.downgradeTo = JavaVersion.VERSION_1_8
 
 base {

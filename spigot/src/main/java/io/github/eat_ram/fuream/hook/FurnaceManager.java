@@ -3,6 +3,7 @@ package io.github.eat_ram.fuream.hook;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
+import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
 
 import de.tr7zw.nbtapi.NBT;
@@ -16,6 +17,7 @@ import io.github.eat_ram.fuream.data.FureamDataHolder;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.data.FurnaceFureamDataRegistry;
 import io.github.eat_ram.fuream.logic.FureamFurnaceEngine;
+import io.github.eat_ram.fuream.nbt.FurnaceRootNbtBridge;
 import io.github.eat_ram.fuream.screen.FureamScreenHandler;
 import io.github.eat_ram.fuream.screen.FureamScreenInventory;
 import io.github.eat_ram.fuream.util.FurnacePos;
@@ -37,7 +39,19 @@ import org.jetbrains.annotations.Nullable;
 
 public class FurnaceManager {
     public static final Map<FurnacePos, FurnaceContext> CONTEXTS = new ConcurrentHashMap<>();
+    private static final String PDC_ROOT_KEY = "PublicBukkitValues";
+    private static final String NBT_API_MARKER_KEY = "__nbtapi";
     private static long tickCounter = 0;
+
+    private static final class NbtLoadResult {
+        private final boolean loaded;
+        private final boolean hasLegacyData;
+
+        private NbtLoadResult(boolean loaded, boolean hasLegacyData) {
+            this.loaded = loaded;
+            this.hasLegacyData = hasLegacyData;
+        }
+    }
 
     public static class FurnaceContext implements FureamDataHolder {
         public final @NotNull FurnacePos pos;
@@ -102,49 +116,47 @@ public class FurnaceManager {
         BlockState state = block.getState();
         if (state instanceof Furnace) {
             try {
-                NBT.getPersistentData(state, (ReadableNBT nbt) -> {
-                    if (nbt != null && nbt.hasTag(FureamMain.DATA_KEY)) {
-                        ReadableNBT dataCompound = nbt.getCompound(FureamMain.DATA_KEY);
+                boolean nativeLoaded = FurnaceRootNbtBridge.loadNativeData(state, ctx);
+                NbtLoadResult loadResult = NBT.get(state, (ReadableNBT rootNbt) -> {
+                    ReadableNBT legacyNbt = getLegacyPdc(rootNbt);
+                    boolean hasLegacyData = hasFureamStorage(legacyNbt);
+                    ReadableNBT dataCompound = nativeLoaded ? null : getDataCompound(legacyNbt);
+
+                    if (dataCompound != null) {
                         ctx.data.readNbt(ctx, dataCompound);
                         for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
                             entry.getValue().readNbt(ctx, dataCompound);
                         }
-                        if (nbt.hasTag("BurnTime")) {
-                            ctx.burnTime = nbt.getInteger("BurnTime");
+                        if (legacyNbt.hasTag("BurnTime")) {
+                            ctx.burnTime = legacyNbt.getInteger("BurnTime");
                         }
-                        if (nbt.hasTag("CookTime")) {
-                            ctx.cookTime = nbt.getInteger("CookTime");
+                        if (legacyNbt.hasTag("CookTime")) {
+                            ctx.cookTime = legacyNbt.getInteger("CookTime");
                         }
-                        if (nbt.hasTag("CookTimeTotal")) {
-                            ctx.cookTimeTotal = nbt.getInteger("CookTimeTotal");
+                        if (legacyNbt.hasTag("CookTimeTotal")) {
+                            ctx.cookTimeTotal = legacyNbt.getInteger("CookTimeTotal");
                         }
-                    } else {
-                        // Vanilla lane migration
-                        Furnace furnaceState = (Furnace) state;
-                        FurnaceInventory inv = furnaceState.getInventory();
-                        ItemStack smelting = inv.getSmelting();
-                        ItemStack fuel = inv.getFuel();
-                        ItemStack result = inv.getResult();
-
-                        if (smelting != null && !smelting.getType().isAir()) ctx.data.inputs.set(0, smelting.clone());
-                        if (fuel != null && !fuel.getType().isAir()) ctx.data.fuels.set(0, fuel.clone());
-                        if (result != null && !result.getType().isAir()) ctx.data.outputs.set(0, result.clone());
-
-                        inv.clear();
-                        ctx.burnTime = furnaceState.getBurnTime();
-                        ctx.cookTime = furnaceState.getCookTime();
-                        ctx.cookTimeTotal = furnaceState.getCookTimeTotal() > 0 ? furnaceState.getCookTimeTotal() : 200;
-                        ctx.dirty = true;
-                        saveToNbt(ctx);
+                        return new NbtLoadResult(true, hasLegacyData);
                     }
-                    return true;
+
+                    return new NbtLoadResult(nativeLoaded, hasLegacyData);
                 });
+
+                if (!loadResult.loaded) {
+                    migrateVanillaLane(ctx, (Furnace) state);
+                }
+                if (loadResult.hasLegacyData) {
+                    ctx.dirty = true;
+                }
             } catch (Exception e) {
                 e.printStackTrace();
             }
         }
 
         CONTEXTS.put(pos, ctx);
+        if (ctx.dirty) {
+            saveToNbt(ctx);
+        }
         return ctx;
     }
 
@@ -156,20 +168,103 @@ public class FurnaceManager {
         BlockState state = block.getState();
         if (state instanceof Furnace) {
             try {
-                NBT.modifyPersistentData(state, (ReadWriteNBT nbt) -> {
-                    ReadWriteNBT dataCompound = nbt.getOrCreateCompound(FureamMain.DATA_KEY);
-                    ctx.data.writeNbt(ctx, dataCompound);
-                    for (FureamData extra : ctx.extraData.values()) {
-                        extra.writeNbt(ctx, dataCompound);
-                    }
-                    nbt.setInteger("BurnTime", ctx.burnTime);
-                    nbt.setInteger("CookTime", ctx.cookTime);
-                    nbt.setInteger("CookTimeTotal", ctx.cookTimeTotal);
-                });
+                absorbVanillaLane(ctx, (Furnace) state);
+                FurnaceRootNbtBridge.store(state, ctx);
+                boolean hasLegacyData = NBT.get(
+                    state,
+                    (ReadableNBT rootNbt) -> hasFureamStorage(getLegacyPdc(rootNbt))
+                );
+                if (hasLegacyData) {
+                    FurnaceRootNbtBridge.withoutInjection(
+                        () -> NBT.modifyPersistentData(state, FurnaceManager::removeLegacyPdc)
+                    );
+                }
                 ctx.dirty = false;
             } catch (Exception e) {
                 e.printStackTrace();
             }
+        }
+    }
+
+    private static void absorbVanillaLane(
+        @NotNull FurnaceContext ctx, @NotNull Furnace furnaceState
+    ) {
+        FurnaceInventory inv = furnaceState.getInventory();
+        inv.setSmelting(absorbLaneStack(ctx.data.inputs, inv.getSmelting()));
+        inv.setFuel(absorbLaneStack(ctx.data.fuels, inv.getFuel()));
+        inv.setResult(absorbLaneStack(ctx.data.outputs, inv.getResult()));
+    }
+
+    private static @Nullable ItemStack absorbLaneStack(
+        @NotNull java.util.List<ItemStack> target, @Nullable ItemStack stack
+    ) {
+        if (stack == null || stack.getType().isAir() || stack.getAmount() <= 0) {
+            return null;
+        }
+        int maxSlots = Math.max(1, target.size());
+        ItemStack remainder = FureamFurnaceEngine.insertStackIntoList(target, stack, maxSlots);
+        return remainder.getType().isAir() ? null : remainder;
+    }
+
+    private static void migrateVanillaLane(
+        @NotNull FurnaceContext ctx, @NotNull Furnace furnaceState
+    ) {
+        FurnaceInventory inv = furnaceState.getInventory();
+        ItemStack smelting = inv.getSmelting();
+        ItemStack fuel = inv.getFuel();
+        ItemStack result = inv.getResult();
+
+        if (smelting != null && !smelting.getType().isAir()) {
+            ctx.data.inputs.set(0, smelting.clone());
+        }
+        if (fuel != null && !fuel.getType().isAir()) {
+            ctx.data.fuels.set(0, fuel.clone());
+        }
+        if (result != null && !result.getType().isAir()) {
+            ctx.data.outputs.set(0, result.clone());
+        }
+
+        inv.clear();
+        ctx.burnTime = furnaceState.getBurnTime();
+        ctx.cookTime = furnaceState.getCookTime();
+        ctx.cookTimeTotal = furnaceState.getCookTimeTotal() > 0
+            ? furnaceState.getCookTimeTotal()
+            : (ctx.type == FurnaceType.FURNACE ? 200 : 100);
+        ctx.dirty = true;
+    }
+
+    private static @Nullable ReadableNBT getDataCompound(@Nullable ReadableNBT nbt) {
+        if (nbt == null || !nbt.hasTag(FureamMain.DATA_KEY)) {
+            return null;
+        }
+        return nbt.getCompound(FureamMain.DATA_KEY);
+    }
+
+    private static @Nullable ReadableNBT getLegacyPdc(@NotNull ReadableNBT rootNbt) {
+        if (!rootNbt.hasTag(PDC_ROOT_KEY)) {
+            return null;
+        }
+        return rootNbt.getCompound(PDC_ROOT_KEY);
+    }
+
+    private static boolean hasFureamStorage(@Nullable ReadableNBT nbt) {
+        return nbt != null && (
+            nbt.hasTag(FureamMain.DATA_KEY) ||
+            nbt.hasTag("BurnTime") ||
+            nbt.hasTag("CookTime") ||
+            nbt.hasTag("CookTimeTotal")
+        );
+    }
+
+    private static void removeLegacyPdc(@NotNull ReadWriteNBT legacyNbt) {
+        legacyNbt.removeKey(FureamMain.DATA_KEY);
+        legacyNbt.removeKey("BurnTime");
+        legacyNbt.removeKey("CookTime");
+        legacyNbt.removeKey("CookTimeTotal");
+
+        Set<String> remaining = legacyNbt.getKeys();
+        if (remaining.size() == 1 && remaining.contains(NBT_API_MARKER_KEY)) {
+            legacyNbt.removeKey(NBT_API_MARKER_KEY);
         }
     }
 

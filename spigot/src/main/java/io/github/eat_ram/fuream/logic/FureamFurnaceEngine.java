@@ -65,14 +65,14 @@ public abstract class FureamFurnaceEngine {
                 ctx.dirty = true;
             }
 
-            // 3. Feed outputs into result slot (bottom hopper output extraction)
+            // 3. Recover outputs stranded in the hidden vanilla result slot.
+            // Bottom hoppers pull directly from data.outputs in FurnaceManager;
+            // proactively filling this slot would hide the first smelted item
+            // from the custom GUI until a second item is produced.
             ItemStack result = inv.getResult();
-            if (result == null || result.getType().isAir()) {
-                ItemStack nextOut = extractFirstNonEmpty(data.outputs);
-                if (nextOut != null) {
-                    inv.setResult(nextOut);
-                    ctx.dirty = true;
-                }
+            if (result != null && !result.getType().isAir() && result.getAmount() > 0) {
+                inv.setResult(recoverVanillaOutput(data.outputs, result, outCount));
+                ctx.dirty = true;
             }
 
             furnaceTile.setCookTime((short) 0);
@@ -107,6 +107,11 @@ public abstract class FureamFurnaceEngine {
         int outSlotIdx = -1;
 
         if (matchedRecipe != null) {
+            NamespacedKey matchedKey = matchedRecipe.getKey();
+            if (!matchedKey.equals(data.runningRecipe)) {
+                data.runningRecipe = matchedKey;
+                ctx.dirty = true;
+            }
             recipeResult = matchedRecipe.getResult();
             outSlotIdx = findFittingOutputSlot(data.outputs, recipeResult);
             if (outSlotIdx >= 0) {
@@ -195,10 +200,17 @@ public abstract class FureamFurnaceEngine {
                 if (inputStack.getAmount() <= 0) {
                     data.inputs.set(firstInputIdx, new ItemStack(Material.AIR));
                 }
+                data.runningRecipe = null;
             }
-        } else if (ctx.cookTime > 0) {
-            ctx.cookTime = Math.max(0, ctx.cookTime - 2);
-            ctx.dirty = true;
+        } else {
+            if (matchedRecipe == null && data.runningRecipe != null) {
+                data.runningRecipe = null;
+                ctx.dirty = true;
+            }
+            if (ctx.cookTime > 0) {
+                ctx.cookTime = Math.max(0, ctx.cookTime - 2);
+                ctx.dirty = true;
+            }
         }
 
         // Update block lit state
@@ -254,25 +266,29 @@ public abstract class FureamFurnaceEngine {
         return remaining;
     }
 
-    public static @Nullable ItemStack extractFirstNonEmpty(@NotNull List<ItemStack> list) {
-        for (int i = 0; i < list.size(); i++) {
-            ItemStack s = list.get(i);
-            if (s != null && !s.getType().isAir() && s.getAmount() > 0) {
-                ItemStack single = s.clone();
-                single.setAmount(1);
-                s.setAmount(s.getAmount() - 1);
-                if (s.getAmount() <= 0) {
-                    list.set(i, new ItemStack(Material.AIR));
-                }
-                return single;
-            }
+    static @Nullable ItemStack recoverVanillaOutput(
+        @NotNull List<ItemStack> outputs, @Nullable ItemStack vanillaResult,
+        int maxSlots
+    ) {
+        if (vanillaResult == null || vanillaResult.getType().isAir() ||
+            vanillaResult.getAmount() <= 0) {
+            return null;
         }
-        return null;
+        ItemStack remainder = insertStackIntoList(outputs, vanillaResult, maxSlots);
+        return remainder.getType().isAir() ? null : remainder;
     }
 
     private static CookingRecipe<?> getRecipeForInput(
         World world, ItemStack input, FurnaceContext ctx
     ) {
+        if (ctx.data.runningRecipe != null) {
+            for (CookingRecipe<?> recipe : FureamFurnaceLogic.findAllMatches(world, input, ctx.type)) {
+                if (recipe.getKey().equals(ctx.data.runningRecipe)) {
+                    return recipe;
+                }
+            }
+        }
+
         NamespacedKey overridden = ctx.data.overriddenRecipes.get(new KeyableItemStack(input));
         if (overridden != null) {
             List<CookingRecipe<?>> matches = FureamFurnaceLogic.findAllMatches(world, input, ctx.type);

@@ -1,6 +1,6 @@
 # Fuream — Spigot/Paper 移植版
 
-Fuream（"熔炉格子扩容 & 经验累积 & 配方冲突解决，三合一"）原为 **Fabric 1.20.1 服务端模组**（`/tmp/workspace/Fuream`）。本工程是它的移植：引擎 / GUI / 漏斗 / 配置全部用 **纯 Bukkit API** 实现（无手写 NMS、无手写反射），持久化走 **de.tr7zw Item-NBT-API 库**，写入方块实体**真实 NBT**，NBT 路径与原 Fabric 实现**逐字节一致**。
+Fuream（"熔炉格子扩容 & 经验累积 & 配方冲突解决，三合一"）原为 **Fabric 1.20.1 服务端模组**（`/tmp/workspace/Fuream`）。本工程是它的移植：引擎 / GUI / 漏斗 / 配置使用 Bukkit API；持久化使用 NBT-API，并在炉子方块实体的读写方法上安装轻量字节码钩子，把数据写入方块实体**真实根 NBT**，NBT 路径与原 Fabric 实现一致。
 
 ## 功能（与原模组 1:1）
 
@@ -15,7 +15,8 @@ Fuream（"熔炉格子扩容 & 经验累积 & 配方冲突解决，三合一"）
 
 - Spigot 1.20.1 与 Paper 1.20.1（`paper` 内核为超集，直接可用）。
 - 目标字节码 Java 17（`options.release = 17`），可用 JDK 17+ 编译/运行。
-- **运行时依赖：NBT-API 插件（de.tr7zw Item-NBT-API ≥ 2.13，包名 `de.tr7zw.changeme.nbtapi`）**，需放入 `plugins/`。本插件 `softdepend: [NBTAPI]`，缺失时自动禁用并给出提示。其余（Bukkit API / Gson）由服务端自带。
+- **运行时依赖：NBT-API 插件（de.tr7zw Item-NBT-API ≥ 2.13）**，需放入 `plugins/`。本插件通过 `depend: [NBTAPI]` 声明依赖；Byte Buddy 与 agent 已打入插件 jar，无需另装。
+- Spigot/Paper 的香草方块实体会丢弃未知根标签，因此不能仅调用 `NBT.modify(BlockState)`。插件会在 `onLoad` 阶段动态安装炉子 `load/save` 钩子；安装失败时插件会拒绝启用，绝不退回 PDC。Java 21 会打印动态 agent 警告，可在启动参数加入 `-XX:+EnableDynamicAgentLoading` 消除该警告。
 
 ## NBT 路径（与原 Fabric 实现一致）
 
@@ -29,13 +30,16 @@ Fuream（"熔炉格子扩容 & 经验累积 & 配方冲突解决，三合一"）
 │  ├─ Outputs                       List<Compound> { 物品NBT…, Slot:int }
 │  ├─ RecipeOverridingInput         Compound 物品NBT（空物品时为 {}）
 │  ├─ OverriddenRecipes             List<Compound> { 物品NBT…, RecipeId:string }
+│  ├─ RunningRecipe                 String（可选，当前熔炼配方 id）
 │  └─ Xp                            Float
-├─ BurnTime / CookTime / CookTimeTotal   Int（香草 BE 根部字段，与原模组
+├─ BurnTime / CookTime / CookTimeTotal   Short（香草 BE 根部字段，与原模组
 │                                       ——由香草引擎写入——同路径）
 └─ Items                            （香草熔炉原 3 格物品栏，作自动化通道）
 ```
 
 - `FureamData` 复合标签、内部各键名、item `Slot`/`RecipeId` 键、`Xp` 类型均为原 Fabric `FureamFurnaceData.writeNbt/readNbt` 的原样结构。
+- 旧 Spigot 版本误写入 `PublicBukkitValues` 的数据会在首次加载方块时自动迁移到根 NBT，并移除 Fuream 自己的旧 PDC 键；其他插件的 PDC 不受影响。
+- 要迁移回 Fabric 时，请先在 Fuream Spigot 插件仍启用的情况下正常停服，然后直接用 Fabric 打开该存档。不要先卸载插件再让 Spigot/Paper 加载并保存区块；香草方块实体不识别 `FureamData`，可能在下次保存时将它丢弃。
 - `BurnTotal`（相当于香草 `fuelTime`）按香草行为**不持久化**（重载后重新点燃）。
 
 ## 更新日志 — Fuream-update1（跟随上游）
@@ -106,7 +110,7 @@ cd FureamSpigot
 | `api/FureamWorldConfig` / `WorldConfigLoader` | 同（Gson 解析 `fuream.json`，语义逐条一致） |
 | `data/FureamFurnaceData` | 同（结构/字段一致） |
 | `data/FureamFurnaceData.writeNbt/readNbt`（存于 BE 的 `FureamData` 标签） | `data/FureamDataCodec`（经 de.tr7zw NBT-API 写入真实 BE NBT，路径逐字节一致） |
-| `mixin` 中 `FureamData` NBT 持久化注入（`readNbt`/`writeNbt` @Inject） | `FureamDataCodec.read/write` + `FurnaceManager` 每 tick 或变更时的读写 |
+| `mixin` 中 `FureamData` NBT 持久化注入（`readNbt`/`writeNbt` @Inject） | `nbt/FurnaceNbtInstrumentation` + `FurnaceRootNbtBridge` + `FurnaceManager` |
 | `logic/FureamFurnaceLogic`（引擎部分） | `logic/FureamFurnaceEngine`（自研引擎，注：原模组把引擎注释保留为规范，此处按其复刻） |
 | `logic/FureamFurnaceLogic`（燃料/配方） | `logic/FuelTable`（香草 1.20.1 燃料表，自字节码逐条导出）+ `logic/BukkitCookingRecipes` |
 | `screen/FureamScreenHandler` / `FureamScreenInventory` | `screen/FurnaceGuiLayout` + `screen/FurnaceGui` + `hook/GuiListener`（Bukkit 事件版） |
@@ -123,7 +127,8 @@ cd FureamSpigot
 ```
 src/main/java/io/github/eat_ram/fuream/
   api/       FurnaceType, FureamWorldConfig, WorldConfigLoader
-  data/      FureamFurnaceData, FureamDataCodec (PDC 持久化)
+  data/      FureamFurnaceData（Fabric 兼容的 NBT 数据结构）
+  nbt/       炉子方块实体 load/save 字节码钩子与根 NBT 桥接
   logic/     FuelTable, CookingRecipeQuery(+Bukkit), FureamFurnaceEngine
   screen/    FurnaceGuiLayout, FurnaceGui
   hook/      FurnaceManager, GuiListener, FurnaceOpenListener, HopperListener, LifecycleListener

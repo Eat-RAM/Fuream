@@ -15,6 +15,7 @@ import org.bukkit.Material;
 import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
+import org.jetbrains.annotations.Nullable;
 
 import static io.github.eat_ram.fuream.CollectionUtil.newDefaultedArrayList;
 
@@ -28,6 +29,7 @@ public class FureamFurnaceData implements FureamData {
     public static final @NotNull String OUTPUTS_KEY = "Outputs";
     public static final @NotNull String RECIPE_OVERRIDING_INPUT_KEY = "RecipeOverridingInput";
     public static final @NotNull String OVERRIDDEN_RECIPES_KEY = "OverriddenRecipes";
+    public static final @NotNull String RUNNING_RECIPE_KEY = "RunningRecipe";
     public static final @NotNull String XP_KEY = "Xp";
 
     public final @NotNull ArrayList<@NotNull ItemStack> inputs;
@@ -35,6 +37,7 @@ public class FureamFurnaceData implements FureamData {
     public final @NotNull ArrayList<@NotNull ItemStack> outputs;
     public @NotNull ItemStack recipeOverridingInput;
     public final @NotNull HashMap<@NotNull KeyableItemStack, @NotNull NamespacedKey> overriddenRecipes;
+    public @Nullable NamespacedKey runningRecipe;
     public float experience;
 
     public FureamFurnaceData() {
@@ -43,10 +46,14 @@ public class FureamFurnaceData implements FureamData {
         this.outputs = newDefaultedArrayList(new ItemStack(Material.AIR), 1);
         this.recipeOverridingInput = new ItemStack(Material.AIR);
         this.overriddenRecipes = new HashMap<>();
+        this.runningRecipe = null;
     }
 
     public boolean hasAny() {
         if (this.experience > 0f) return true;
+        if (this.recipeOverridingInput != null &&
+            !this.recipeOverridingInput.getType().isAir()) return true;
+        if (!this.overriddenRecipes.isEmpty() || this.runningRecipe != null) return true;
         for (ItemStack s : this.inputs) {
             if (!s.getType().isAir() && s.getAmount() > 0) return true;
         }
@@ -68,28 +75,31 @@ public class FureamFurnaceData implements FureamData {
         if (nbt.hasTag(RECIPE_OVERRIDING_INPUT_KEY)) {
             nbt.removeKey(RECIPE_OVERRIDING_INPUT_KEY);
         }
+        ReadWriteNBT overridingInputTag = nbt.getOrCreateCompound(RECIPE_OVERRIDING_INPUT_KEY);
         if (this.recipeOverridingInput != null && !this.recipeOverridingInput.getType().isAir()) {
-            ReadWriteNBT tag = nbt.getOrCreateCompound(RECIPE_OVERRIDING_INPUT_KEY);
-            NbtUtil.writeItemToCompound(tag, this.recipeOverridingInput);
+            NbtUtil.writeItemToCompound(overridingInputTag, this.recipeOverridingInput);
         }
 
-        if (nbt.hasTag(OVERRIDDEN_RECIPES_KEY)) {
-            nbt.removeKey(OVERRIDDEN_RECIPES_KEY);
-        }
-        if (!this.overriddenRecipes.isEmpty()) {
-            ReadWriteNBTCompoundList list = nbt.getCompoundList(OVERRIDDEN_RECIPES_KEY);
-            for (Map.Entry<KeyableItemStack, NamespacedKey> entry : this.overriddenRecipes.entrySet()) {
-                ItemStack stack = entry.getKey().stack;
-                if (!stack.getType().isAir()) {
-                    ReadWriteNBT sub = list.addCompound();
-                    ReadWriteNBT itemNbt = NBT.itemStackToNBT(stack);
-                    sub.mergeCompound(itemNbt);
-                    sub.setString("RecipeId", entry.getValue().toString());
-                }
+        ReadWriteNBTCompoundList list = NbtUtil.resetCompoundList(nbt, OVERRIDDEN_RECIPES_KEY);
+        for (Map.Entry<KeyableItemStack, NamespacedKey> entry : this.overriddenRecipes.entrySet()) {
+            ItemStack stack = entry.getKey().stack;
+            if (!stack.getType().isAir()) {
+                ReadWriteNBT sub = list.addCompound();
+                ReadWriteNBT itemNbt = NBT.itemStackToNBT(stack);
+                sub.mergeCompound(itemNbt);
+                sub.setString("RecipeId", entry.getValue().toString());
             }
         }
+
+        if (this.runningRecipe != null) {
+            nbt.setString(RUNNING_RECIPE_KEY, this.runningRecipe.toString());
+        } else if (nbt.hasTag(RUNNING_RECIPE_KEY)) {
+            nbt.removeKey(RUNNING_RECIPE_KEY);
+        }
         nbt.setFloat(XP_KEY, this.experience);
-        nbt.setBoolean("FureamInitialized", true);
+        if (nbt.hasTag("FureamInitialized")) {
+            nbt.removeKey("FureamInitialized");
+        }
     }
 
     @Override
@@ -136,6 +146,9 @@ public class FureamFurnaceData implements FureamData {
                 }
             }
         }
+        this.runningRecipe = nbt.hasTag(RUNNING_RECIPE_KEY)
+            ? NamespacedKey.fromString(nbt.getString(RUNNING_RECIPE_KEY))
+            : null;
         this.experience = nbt.hasTag(XP_KEY) ? nbt.getFloat(XP_KEY) : 0f;
     }
 }

@@ -31,6 +31,8 @@ repositories {
 }
 
 dependencies {
+    implementation("net.bytebuddy:byte-buddy:1.17.7")
+    implementation("net.bytebuddy:byte-buddy-agent:1.17.7")
     compileOnly("org.spigotmc:spigot-api:1.20.1-R0.1-SNAPSHOT")
     compileOnly("de.tr7zw:item-nbt-api:2.14.1")
     compileOnly("de.tr7zw:item-nbt-api-plugin:2.14.1")
@@ -70,6 +72,12 @@ tasks.withType<JavaCompile>().configureEach {
 }
 
 tasks.jar {
+    duplicatesStrategy = DuplicatesStrategy.EXCLUDE
+    from(configurations.runtimeClasspath.get().map { dependency ->
+        if (dependency.isDirectory) dependency else zipTree(dependency)
+    }) {
+        exclude("META-INF/*.SF", "META-INF/*.DSA", "META-INF/*.RSA", "module-info.class")
+    }
     from(rootProject.file("LICENSE")) {
         into("META-INF")
     }

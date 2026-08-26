@@ -13,6 +13,7 @@ import io.github.eat_ram.fuream.hook.FurnaceManager;
 import io.github.eat_ram.fuream.hook.FurnaceOpenListener;
 import io.github.eat_ram.fuream.hook.GuiListener;
 import io.github.eat_ram.fuream.hook.HopperListener;
+import io.github.eat_ram.fuream.nbt.FurnaceNbtInstrumentation;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
@@ -38,14 +39,33 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
     public static final String DATA_KEY = "FureamData";
     public static final Map<@NotNull World, @NotNull FureamWorldConfig> WORLD_CONFIGS = new WeakHashMap<>();
     private static FureamMain INSTANCE;
+    private boolean rootNbtReady;
 
     public static FureamMain getInstance() {
         return INSTANCE;
     }
 
     @Override
+    public void onLoad() {
+        try {
+            FurnaceNbtInstrumentation.install(this);
+            this.rootNbtReady = true;
+        } catch (Throwable e) {
+            this.getLogger().severe(
+                "Unable to install furnace root-NBT hooks; refusing to fall back to PDC: " + e
+            );
+            e.printStackTrace();
+        }
+    }
+
+    @Override
     public void onEnable() {
         INSTANCE = this;
+
+        if (!this.rootNbtReady) {
+            this.getServer().getPluginManager().disablePlugin(this);
+            return;
+        }
 
         if (!this.getServer().getPluginManager().isPluginEnabled("NBTAPI")) {
             this.getLogger().severe("Item-NBT-API is required for Fuream to operate! Please install NBT-API plugin.");

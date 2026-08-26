@@ -36,10 +36,7 @@ public abstract class NbtUtil {
         @NotNull ReadWriteNBT parent, @NotNull String key,
         @NotNull Iterable<@NotNull ItemStack> stacks
     ) {
-        if (parent.hasTag(key)) {
-            parent.removeKey(key);
-        }
-        ReadWriteNBTCompoundList list = parent.getCompoundList(key);
+        ReadWriteNBTCompoundList list = resetCompoundList(parent, key);
         int slot = 0;
         for (ItemStack stack : stacks) {
             if (stack != null && !stack.getType().isAir() && stack.getAmount() > 0) {
@@ -50,6 +47,19 @@ public abstract class NbtUtil {
             }
             ++slot;
         }
+    }
+
+    public static @NotNull ReadWriteNBTCompoundList resetCompoundList(
+        @NotNull ReadWriteNBT parent, @NotNull String key
+    ) {
+        if (parent.hasTag(key)) {
+            parent.removeKey(key);
+        }
+        // NBT-API creates compound-list tags lazily. Merging an explicit empty
+        // list keeps Fabric's required `Key: []` representation even when no
+        // entries are added afterwards.
+        parent.mergeCompound(NBT.parseNBT("{\"" + key + "\":[]}"));
+        return parent.getCompoundList(key);
     }
 
     public static void readStacks(

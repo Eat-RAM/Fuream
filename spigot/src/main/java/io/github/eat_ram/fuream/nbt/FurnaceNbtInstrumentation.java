@@ -3,7 +3,9 @@ package io.github.eat_ram.fuream.nbt;
 import java.lang.instrument.Instrumentation;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
+import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.List;
 import java.util.function.BiConsumer;
 
 import net.bytebuddy.agent.ByteBuddyAgent;
@@ -33,7 +35,22 @@ public final class FurnaceNbtInstrumentation {
         Class<?> furnaceClass = findFurnaceClass();
         Method loadMethod = findPersistenceMethod(furnaceClass, true);
         Method saveMethod = findPersistenceMethod(furnaceClass, false);
-        Instrumentation instrumentation = ByteBuddyAgent.install();
+        Instrumentation instrumentation;
+        try {
+            instrumentation = ByteBuddyAgent.install();
+        } catch (IllegalStateException defaultAttachmentFailure) {
+            try {
+                instrumentation = ByteBuddyAgent.install(
+                    ByteBuddyAgent.AttachmentProvider.ForEmulatedAttachment.INSTANCE
+                );
+                plugin.getLogger().info(
+                    "Default JVM attachment unavailable; using bundled native attachment provider"
+                );
+            } catch (RuntimeException emulatedAttachmentFailure) {
+                emulatedAttachmentFailure.addSuppressed(defaultAttachmentFailure);
+                throw emulatedAttachmentFailure;
+            }
+        }
 
         if (!instrumentation.isModifiableClass(furnaceClass)) {
             throw new IllegalStateException("Furnace block entity class is not modifiable: " + furnaceClass.getName());
@@ -85,35 +102,53 @@ public final class FurnaceNbtInstrumentation {
     }
 
     private static Method findPersistenceMethod(Class<?> furnaceClass, boolean load) {
-        String modernName = load ? "loadAdditional" : "saveAdditional";
-        for (Method method : furnaceClass.getDeclaredMethods()) {
-            if (modernName.equals(method.getName()) && hasCompoundFirstArgument(method)) {
-                return method;
+        String[] preferredNames = load
+            ? new String[] {"loadAdditional", "load", "loadData", "a"}
+            : new String[] {"saveAdditional", "save", "saveData", "b"};
+        List<Method> candidates = new ArrayList<>();
+        for (Class<?> current = furnaceClass; current != null; current = current.getSuperclass()) {
+            for (Method method : current.getDeclaredMethods()) {
+                if (!Modifier.isStatic(method.getModifiers()) && hasCompoundArgument(method)) {
+                    candidates.add(method);
+                }
             }
         }
 
-        for (Method method : furnaceClass.getDeclaredMethods()) {
-            int modifiers = method.getModifiers();
-            boolean accessMatches = load ? Modifier.isPublic(modifiers) : Modifier.isProtected(modifiers);
-            if (accessMatches && !Modifier.isStatic(modifiers) &&
-                method.getReturnType() == void.class && hasCompoundFirstArgument(method)) {
-                return method;
+        for (String name : preferredNames) {
+            for (Method method : candidates) {
+                if (name.equals(method.getName()) && returnTypeMatches(method, load)) {
+                    return method;
+                }
             }
+        }
+
+        for (Method method : candidates) {
+            int modifiers = method.getModifiers();
+            boolean accessMatches = load
+                ? Modifier.isPublic(modifiers)
+                : Modifier.isProtected(modifiers) || !Modifier.isPublic(modifiers);
+            if (accessMatches && returnTypeMatches(method, load)) return method;
         }
 
         throw new IllegalStateException(
             "Unable to locate furnace " + (load ? "load" : "save") + " method on " +
-            furnaceClass.getName() + "; declared methods=" + Arrays.toString(furnaceClass.getDeclaredMethods())
+            furnaceClass.getName() + "; candidate methods=" + Arrays.toString(candidates.toArray())
         );
     }
 
-    private static boolean hasCompoundFirstArgument(Method method) {
-        Class<?>[] parameters = method.getParameterTypes();
-        if (parameters.length == 0) {
-            return false;
-        }
-        String name = parameters[0].getName();
+    private static boolean returnTypeMatches(Method method, boolean load) {
+        if (load) return method.getReturnType() == void.class;
+        if (method.getReturnType() == void.class) return true;
+        String name = method.getReturnType().getName();
         return name.endsWith(".CompoundTag") || name.endsWith(".NBTTagCompound");
+    }
+
+    private static boolean hasCompoundArgument(Method method) {
+        for (Class<?> parameter : method.getParameterTypes()) {
+            String name = parameter.getName();
+            if (name.endsWith(".CompoundTag") || name.endsWith(".NBTTagCompound")) return true;
+        }
+        return false;
     }
 
     public static class LoadAdvice {
@@ -121,8 +156,18 @@ public final class FurnaceNbtInstrumentation {
         @SuppressWarnings("unchecked")
         public static void exit(
             @Advice.This Object furnace,
-            @Advice.Argument(0) Object rootNbt
+            @Advice.AllArguments Object[] arguments
         ) {
+            Object rootNbt = null;
+            for (Object argument : arguments) {
+                if (argument == null) continue;
+                String name = argument.getClass().getName();
+                if (name.endsWith(".CompoundTag") || name.endsWith(".NBTTagCompound")) {
+                    rootNbt = argument;
+                    break;
+                }
+            }
+            if (rootNbt == null) return;
             Object callback = System.getProperties().get(
                 "io.github.eat_ram.fuream.root_nbt_load_hook"
             );
@@ -137,8 +182,18 @@ public final class FurnaceNbtInstrumentation {
         @SuppressWarnings("unchecked")
         public static void exit(
             @Advice.This Object furnace,
-            @Advice.Argument(0) Object rootNbt
+            @Advice.AllArguments Object[] arguments
         ) {
+            Object rootNbt = null;
+            for (Object argument : arguments) {
+                if (argument == null) continue;
+                String name = argument.getClass().getName();
+                if (name.endsWith(".CompoundTag") || name.endsWith(".NBTTagCompound")) {
+                    rootNbt = argument;
+                    break;
+                }
+            }
+            if (rootNbt == null) return;
             Object callback = System.getProperties().get(
                 "io.github.eat_ram.fuream.root_nbt_save_hook"
             );

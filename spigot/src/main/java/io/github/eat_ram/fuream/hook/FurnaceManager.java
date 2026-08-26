@@ -3,24 +3,25 @@ package io.github.eat_ram.fuream.hook;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
-import java.util.Set;
 import java.util.concurrent.ConcurrentHashMap;
+import java.util.UUID;
 
-import de.tr7zw.nbtapi.NBT;
-import de.tr7zw.nbtapi.iface.ReadWriteNBT;
-import de.tr7zw.nbtapi.iface.ReadableNBT;
 import io.github.eat_ram.fuream.FureamMain;
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
+import io.github.eat_ram.fuream.compat.ItemCompat;
+import io.github.eat_ram.fuream.compat.FurnaceCompat;
+import io.github.eat_ram.fuream.compat.ComparatorCompat;
 import io.github.eat_ram.fuream.data.FureamData;
 import io.github.eat_ram.fuream.data.FureamDataHolder;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.data.FurnaceFureamDataRegistry;
 import io.github.eat_ram.fuream.logic.FureamFurnaceEngine;
 import io.github.eat_ram.fuream.nbt.FurnaceRootNbtBridge;
-import io.github.eat_ram.fuream.screen.FureamScreenHandler;
+import io.github.eat_ram.fuream.nbt.NativeNbtCompound;
 import io.github.eat_ram.fuream.screen.FureamScreenInventory;
 import io.github.eat_ram.fuream.util.FurnacePos;
+import io.github.eat_ram.fuream.util.KeyableItemStack;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
@@ -40,18 +41,7 @@ import org.jetbrains.annotations.Nullable;
 public class FurnaceManager {
     public static final Map<FurnacePos, FurnaceContext> CONTEXTS = new ConcurrentHashMap<>();
     private static final String PDC_ROOT_KEY = "PublicBukkitValues";
-    private static final String NBT_API_MARKER_KEY = "__nbtapi";
     private static long tickCounter = 0;
-
-    private static final class NbtLoadResult {
-        private final boolean loaded;
-        private final boolean hasLegacyData;
-
-        private NbtLoadResult(boolean loaded, boolean hasLegacyData) {
-            this.loaded = loaded;
-            this.hasLegacyData = hasLegacyData;
-        }
-    }
 
     public static class FurnaceContext implements FureamDataHolder {
         public final @NotNull FurnacePos pos;
@@ -64,9 +54,13 @@ public class FurnaceManager {
         public int cookTime;
         public int cookTimeTotal;
 
-        public @Nullable FureamScreenInventory activeGui;
-        public @Nullable FureamScreenHandler handler;
+        public final @NotNull Map<UUID, FureamScreenInventory> sessions = new ConcurrentHashMap<>();
         public boolean dirty;
+        public boolean passiveProjected;
+        public int lastInputSlot = -1;
+        public @Nullable KeyableItemStack lastInputKey;
+        public boolean startSmeltPending = true;
+        public int lastComparatorSignal = -1;
 
         public FurnaceContext(@NotNull FurnacePos pos, @NotNull FurnaceType type) {
             this.pos = pos;
@@ -117,39 +111,42 @@ public class FurnaceManager {
         if (state instanceof Furnace) {
             try {
                 boolean nativeLoaded = FurnaceRootNbtBridge.loadNativeData(state, ctx);
-                NbtLoadResult loadResult = NBT.get(state, (ReadableNBT rootNbt) -> {
-                    ReadableNBT legacyNbt = getLegacyPdc(rootNbt);
-                    boolean hasLegacyData = hasFureamStorage(legacyNbt);
-                    ReadableNBT dataCompound = nativeLoaded ? null : getDataCompound(legacyNbt);
-
-                    if (dataCompound != null) {
-                        ctx.data.readNbt(ctx, dataCompound);
-                        for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
-                            entry.getValue().readNbt(ctx, dataCompound);
-                        }
-                        if (legacyNbt.hasTag("BurnTime")) {
-                            ctx.burnTime = legacyNbt.getInteger("BurnTime");
-                        }
-                        if (legacyNbt.hasTag("CookTime")) {
-                            ctx.cookTime = legacyNbt.getInteger("CookTime");
-                        }
-                        if (legacyNbt.hasTag("CookTimeTotal")) {
-                            ctx.cookTimeTotal = legacyNbt.getInteger("CookTimeTotal");
-                        }
-                        return new NbtLoadResult(true, hasLegacyData);
+                NativeNbtCompound root = FurnaceRootNbtBridge.capturedRoot(state);
+                NativeNbtCompound legacyNbt = getLegacyPdc(root);
+                boolean hasLegacyData = hasFureamStorage(legacyNbt);
+                NativeNbtCompound dataCompound = nativeLoaded ? null : getDataCompound(legacyNbt);
+                boolean loaded = nativeLoaded;
+                if (dataCompound != null) {
+                    ctx.data.readNbt(ctx, dataCompound);
+                    for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
+                        entry.getValue().readNbt(ctx, dataCompound);
                     }
-
-                    return new NbtLoadResult(nativeLoaded, hasLegacyData);
-                });
-
-                if (!loadResult.loaded) {
-                    migrateVanillaLane(ctx, (Furnace) state);
+                    ctx.burnTime = legacyNbt.getInt("BurnTime", ctx.burnTime);
+                    ctx.cookTime = legacyNbt.getInt("CookTime", ctx.cookTime);
+                    ctx.cookTimeTotal = legacyNbt.getInt("CookTimeTotal", ctx.cookTimeTotal);
+                    loaded = true;
                 }
-                if (loadResult.hasLegacyData) {
+
+                boolean enabled = isEnabled(block.getWorld(), type);
+                if (!loaded && !enabled) {
+                    return null;
+                }
+                if (!loaded) {
+                    migrateVanillaLane(ctx, (Furnace) state);
+                } else if (enabled) {
+                    clearNativeLane((Furnace) state);
+                } else {
+                    projectPassiveLane(ctx, (Furnace) state);
+                }
+                if (hasLegacyData) {
+                    removeLegacyPdc(legacyNbt);
                     ctx.dirty = true;
                 }
+                initializeInputIdentity(ctx);
             } catch (Exception e) {
-                e.printStackTrace();
+                FureamMain.getInstance().getLogger().log(java.util.logging.Level.SEVERE,
+                    "Unable to load furnace data at " + pos, e);
+                return null;
             }
         }
 
@@ -160,6 +157,21 @@ public class FurnaceManager {
         return ctx;
     }
 
+    private static void initializeInputIdentity(@NotNull FurnaceContext ctx) {
+        int inputSlot = firstPresentSlot(ctx.data.inputs);
+        ctx.lastInputSlot = inputSlot;
+        if (inputSlot < 0) {
+            ctx.lastInputKey = null;
+            ctx.startSmeltPending = true;
+            return;
+        }
+
+        ItemStack input = ctx.data.inputs.get(inputSlot).clone();
+        input.setAmount(1);
+        ctx.lastInputKey = new KeyableItemStack(input);
+        ctx.startSmeltPending = ctx.data.runningRecipe == null || ctx.cookTime <= 0;
+    }
+
     public static void saveToNbt(@NotNull FurnaceContext ctx) {
         World world = ctx.getWorld();
         if (world == null || !world.isChunkLoaded(ctx.pos.x >> 4, ctx.pos.z >> 4)) return;
@@ -168,20 +180,16 @@ public class FurnaceManager {
         BlockState state = block.getState();
         if (state instanceof Furnace) {
             try {
-                absorbVanillaLane(ctx, (Furnace) state);
-                FurnaceRootNbtBridge.store(state, ctx);
-                boolean hasLegacyData = NBT.get(
-                    state,
-                    (ReadableNBT rootNbt) -> hasFureamStorage(getLegacyPdc(rootNbt))
-                );
-                if (hasLegacyData) {
-                    FurnaceRootNbtBridge.withoutInjection(
-                        () -> NBT.modifyPersistentData(state, FurnaceManager::removeLegacyPdc)
-                    );
+                if (!ctx.passiveProjected) {
+                    absorbVanillaLane(ctx, (Furnace) state);
+                } else {
+                    syncPassiveTimes(ctx, (Furnace) state);
                 }
+                FurnaceRootNbtBridge.store(state, ctx);
                 ctx.dirty = false;
             } catch (Exception e) {
-                e.printStackTrace();
+                FureamMain.getInstance().getLogger().log(java.util.logging.Level.SEVERE,
+                    "Unable to save furnace data at " + ctx.pos, e);
             }
         }
     }
@@ -198,12 +206,12 @@ public class FurnaceManager {
     private static @Nullable ItemStack absorbLaneStack(
         @NotNull java.util.List<ItemStack> target, @Nullable ItemStack stack
     ) {
-        if (stack == null || stack.getType().isAir() || stack.getAmount() <= 0) {
+        if (ItemCompat.isEmpty(stack)) {
             return null;
         }
         int maxSlots = Math.max(1, target.size());
         ItemStack remainder = FureamFurnaceEngine.insertStackIntoList(target, stack, maxSlots);
-        return remainder.getType().isAir() ? null : remainder;
+        return ItemCompat.isEmpty(remainder) ? null : remainder;
     }
 
     private static void migrateVanillaLane(
@@ -214,58 +222,118 @@ public class FurnaceManager {
         ItemStack fuel = inv.getFuel();
         ItemStack result = inv.getResult();
 
-        if (smelting != null && !smelting.getType().isAir()) {
+        if (!ItemCompat.isEmpty(smelting)) {
             ctx.data.inputs.set(0, smelting.clone());
         }
-        if (fuel != null && !fuel.getType().isAir()) {
+        if (!ItemCompat.isEmpty(fuel)) {
             ctx.data.fuels.set(0, fuel.clone());
         }
-        if (result != null && !result.getType().isAir()) {
+        if (!ItemCompat.isEmpty(result)) {
             ctx.data.outputs.set(0, result.clone());
         }
 
         inv.clear();
-        ctx.burnTime = furnaceState.getBurnTime();
-        ctx.cookTime = furnaceState.getCookTime();
-        ctx.cookTimeTotal = furnaceState.getCookTimeTotal() > 0
-            ? furnaceState.getCookTimeTotal()
+        ctx.burnTime = FurnaceCompat.getBurnTime(furnaceState);
+        ctx.cookTime = FurnaceCompat.getCookTime(furnaceState);
+        int nativeTotal = FurnaceCompat.getCookTimeTotal(
+            furnaceState, ctx.type == FurnaceType.FURNACE ? 200 : 100
+        );
+        ctx.cookTimeTotal = nativeTotal > 0
+            ? nativeTotal
             : (ctx.type == FurnaceType.FURNACE ? 200 : 100);
         ctx.dirty = true;
     }
 
-    private static @Nullable ReadableNBT getDataCompound(@Nullable ReadableNBT nbt) {
-        if (nbt == null || !nbt.hasTag(FureamMain.DATA_KEY)) {
+    private static @Nullable NativeNbtCompound getDataCompound(@Nullable NativeNbtCompound nbt) {
+        if (nbt == null || !nbt.has(FureamMain.DATA_KEY)) {
             return null;
         }
         return nbt.getCompound(FureamMain.DATA_KEY);
     }
 
-    private static @Nullable ReadableNBT getLegacyPdc(@NotNull ReadableNBT rootNbt) {
-        if (!rootNbt.hasTag(PDC_ROOT_KEY)) {
+    private static @Nullable NativeNbtCompound getLegacyPdc(@Nullable NativeNbtCompound rootNbt) {
+        if (rootNbt == null || !rootNbt.has(PDC_ROOT_KEY)) {
             return null;
         }
         return rootNbt.getCompound(PDC_ROOT_KEY);
     }
 
-    private static boolean hasFureamStorage(@Nullable ReadableNBT nbt) {
+    private static boolean hasFureamStorage(@Nullable NativeNbtCompound nbt) {
         return nbt != null && (
-            nbt.hasTag(FureamMain.DATA_KEY) ||
-            nbt.hasTag("BurnTime") ||
-            nbt.hasTag("CookTime") ||
-            nbt.hasTag("CookTimeTotal")
+            nbt.has(FureamMain.DATA_KEY) ||
+            nbt.has("BurnTime") ||
+            nbt.has("CookTime") ||
+            nbt.has("CookTimeTotal")
         );
     }
 
-    private static void removeLegacyPdc(@NotNull ReadWriteNBT legacyNbt) {
-        legacyNbt.removeKey(FureamMain.DATA_KEY);
-        legacyNbt.removeKey("BurnTime");
-        legacyNbt.removeKey("CookTime");
-        legacyNbt.removeKey("CookTimeTotal");
+    private static void removeLegacyPdc(@Nullable NativeNbtCompound legacyNbt) {
+        if (legacyNbt == null) return;
+        legacyNbt.remove(FureamMain.DATA_KEY);
+        legacyNbt.remove("BurnTime");
+        legacyNbt.remove("CookTime");
+        legacyNbt.remove("CookTimeTotal");
+    }
 
-        Set<String> remaining = legacyNbt.getKeys();
-        if (remaining.size() == 1 && remaining.contains(NBT_API_MARKER_KEY)) {
-            legacyNbt.removeKey(NBT_API_MARKER_KEY);
+    private static boolean isEnabled(@Nullable World world, @NotNull FurnaceType type) {
+        FureamWorldConfig config = FureamMain.getWorldConfig(world);
+        return config != null && config.getEnabledFurnaceTypes().contains(type);
+    }
+
+    private static void clearNativeLane(@NotNull Furnace furnace) {
+        furnace.getInventory().clear();
+    }
+
+    private static void projectPassiveLane(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
+        FurnaceInventory inventory = furnace.getInventory();
+        inventory.setSmelting(adoptOrTakeProjection(ctx.data.inputs, inventory.getSmelting()));
+        inventory.setFuel(adoptOrTakeProjection(ctx.data.fuels, inventory.getFuel()));
+        inventory.setResult(adoptOrTakeProjection(ctx.data.outputs, inventory.getResult()));
+        FurnaceCompat.setBurnTime(furnace, Math.max(0, ctx.burnTime));
+        FurnaceCompat.setCookTime(furnace, Math.max(0, ctx.cookTime));
+        if (ctx.cookTimeTotal > 0) FurnaceCompat.setCookTimeTotal(furnace, ctx.cookTimeTotal);
+        ctx.passiveProjected = true;
+        ctx.dirty = true;
+    }
+
+    private static @Nullable ItemStack adoptOrTakeProjection(
+        @NotNull java.util.List<ItemStack> virtual, @Nullable ItemStack nativeStack
+    ) {
+        int first = firstPresentSlot(virtual);
+        if (!ItemCompat.isEmpty(nativeStack)) {
+            if (first >= 0 && virtual.get(first).isSimilar(nativeStack) &&
+                virtual.get(first).getAmount() == nativeStack.getAmount()) {
+                virtual.set(first, ItemCompat.empty());
+            }
+            return nativeStack;
         }
+        if (first < 0) return null;
+        ItemStack result = virtual.get(first).clone();
+        virtual.set(first, ItemCompat.empty());
+        return result;
+    }
+
+    private static int firstPresentSlot(@NotNull java.util.List<ItemStack> stacks) {
+        for (int i = 0; i < stacks.size(); i++) {
+            if (!ItemCompat.isEmpty(stacks.get(i))) return i;
+        }
+        return -1;
+    }
+
+    private static void resumeActive(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
+        if (!ctx.passiveProjected) return;
+        absorbVanillaLane(ctx, furnace);
+        ctx.burnTime = FurnaceCompat.getBurnTime(furnace);
+        ctx.cookTime = FurnaceCompat.getCookTime(furnace);
+        ctx.cookTimeTotal = FurnaceCompat.getCookTimeTotal(furnace, ctx.cookTimeTotal);
+        ctx.passiveProjected = false;
+        ctx.dirty = true;
+    }
+
+    private static void syncPassiveTimes(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
+        ctx.burnTime = FurnaceCompat.getBurnTime(furnace);
+        ctx.cookTime = FurnaceCompat.getCookTime(furnace);
+        ctx.cookTimeTotal = FurnaceCompat.getCookTimeTotal(furnace, ctx.cookTimeTotal);
     }
 
     public static void tickAll() {
@@ -276,6 +344,7 @@ public class FurnaceManager {
             World world = ctx.getWorld();
 
             if (world == null || !world.isChunkLoaded(ctx.pos.x >> 4, ctx.pos.z >> 4)) {
+                closeSessions(ctx);
                 if (ctx.dirty) {
                     saveToNbt(ctx);
                 }
@@ -287,6 +356,7 @@ public class FurnaceManager {
             FurnaceType currentType = FureamMain.getFurnaceType(block);
             if (currentType == null) {
                 // Block was removed or changed
+                closeSessions(ctx);
                 if (ctx.dirty) {
                     saveToNbt(ctx);
                 }
@@ -295,13 +365,28 @@ public class FurnaceManager {
             }
 
             FureamWorldConfig config = FureamMain.getWorldConfig(world);
-            if (config != null && config.getEnabledFurnaceTypes().contains(ctx.type)) {
+            boolean enabled = config != null && config.getEnabledFurnaceTypes().contains(ctx.type);
+            validateSessions(ctx, block, enabled);
+            BlockState state = block.getState();
+            if (enabled) {
+                if (ctx.passiveProjected && state instanceof Furnace) {
+                    resumeActive(ctx, (Furnace) state);
+                }
                 FureamFurnaceEngine.tick(ctx, config);
+                int comparatorSignal = ComparatorCompat.calculate(ctx.data);
+                if (comparatorSignal != ctx.lastComparatorSignal || tickCounter % 20 == 0) {
+                    ComparatorCompat.updateAround(block, comparatorSignal);
+                    ctx.lastComparatorSignal = comparatorSignal;
+                }
 
                 // Handle hopper below extraction (every 8 ticks, standard hopper speed)
                 if (tickCounter % 8 == 0) {
                     processHopperPull(block, ctx);
                 }
+            } else if (!ctx.passiveProjected && state instanceof Furnace) {
+                projectPassiveLane(ctx, (Furnace) state);
+            } else if (ctx.passiveProjected && state instanceof Furnace) {
+                syncPassiveTimes(ctx, (Furnace) state);
             }
 
             // Periodic save if dirty
@@ -319,22 +404,19 @@ public class FurnaceManager {
         Inventory targetInv = null;
 
         if (below.getType() == Material.HOPPER) {
-            if (below.getBlockData() instanceof org.bukkit.block.data.type.Hopper) {
-                org.bukkit.block.data.type.Hopper hopperData = (org.bukkit.block.data.type.Hopper) below.getBlockData();
-                if (hopperData.isEnabled()) {
-                    BlockState belowState = below.getState();
-                    if (belowState instanceof Hopper) {
-                        targetInv = ((Hopper) belowState).getInventory();
-                    }
+            if (isHopperEnabled(below)) {
+                BlockState belowState = below.getState();
+                if (belowState instanceof Hopper) {
+                    targetInv = ((Hopper) belowState).getInventory();
                 }
             }
         }
 
         if (targetInv == null) {
             Location centerBelow = furnaceBlock.getLocation().add(0.5, -0.5, 0.5);
-            for (org.bukkit.entity.Entity e : furnaceBlock.getWorld().getNearbyEntities(centerBelow, 0.6, 0.6, 0.6)) {
-                if (e instanceof HopperMinecart) {
-                    targetInv = ((HopperMinecart) e).getInventory();
+            for (Object entity : nearbyEntities(furnaceBlock.getWorld(), centerBelow)) {
+                if (entity instanceof HopperMinecart) {
+                    targetInv = ((HopperMinecart) entity).getInventory();
                     break;
                 }
             }
@@ -344,55 +426,155 @@ public class FurnaceManager {
             return;
         }
 
-        // 1. Try pulling from outputs first
-        for (int i = 0; i < ctx.data.outputs.size(); i++) {
-            ItemStack outStack = ctx.data.outputs.get(i);
-            if (!outStack.getType().isAir() && outStack.getAmount() > 0) {
-                ItemStack single = outStack.clone();
-                single.setAmount(1);
-
-                Map<Integer, ItemStack> leftover = targetInv.addItem(single);
-                if (leftover.isEmpty()) {
-                    outStack.setAmount(outStack.getAmount() - 1);
-                    if (outStack.getAmount() <= 0) {
-                        ctx.data.outputs.set(i, new ItemStack(Material.AIR));
-                    }
-                    if (ctx.activeGui != null) {
-                        ctx.activeGui.refreshVisuals();
-                    }
-                    ctx.dirty = true;
-                    return;
-                }
-            }
-        }
-
-        // 2. Try pulling empty buckets or water buckets from fuels
+        // Fabric exposes extractable fuel remainders before outputs.
+        Material bucket = Material.matchMaterial("BUCKET");
+        Material waterBucket = Material.matchMaterial("WATER_BUCKET");
         for (int i = 0; i < ctx.data.fuels.size(); i++) {
             ItemStack fuelStack = ctx.data.fuels.get(i);
-            if (fuelStack.getType() == Material.BUCKET || fuelStack.getType() == Material.WATER_BUCKET) {
-                ItemStack single = fuelStack.clone();
-                single.setAmount(1);
-
-                Map<Integer, ItemStack> leftover = targetInv.addItem(single);
-                if (leftover.isEmpty()) {
-                    fuelStack.setAmount(fuelStack.getAmount() - 1);
-                    if (fuelStack.getAmount() <= 0) {
-                        ctx.data.fuels.set(i, new ItemStack(Material.AIR));
-                    }
-                    if (ctx.activeGui != null) {
-                        ctx.activeGui.refreshVisuals();
-                    }
-                    ctx.dirty = true;
-                    return;
-                }
+            if (!ItemCompat.isEmpty(fuelStack) &&
+                (fuelStack.getType() == bucket || fuelStack.getType() == waterBucket)) {
+                if (moveOne(furnaceBlock, targetInv, ctx.data.fuels, i, ctx)) return;
             }
         }
+        for (int i = 0; i < ctx.data.outputs.size(); i++) {
+            if (!ItemCompat.isEmpty(ctx.data.outputs.get(i)) &&
+                moveOne(furnaceBlock, targetInv, ctx.data.outputs, i, ctx)) return;
+        }
+    }
+
+    private static @NotNull Iterable<?> nearbyEntities(
+        @NotNull World world, @NotNull Location center
+    ) {
+        try {
+            Object entities = world.getClass().getMethod(
+                "getNearbyEntities", Location.class, double.class, double.class, double.class
+            ).invoke(world, center, 0.6, 0.6, 0.6);
+            if (entities instanceof Iterable) return (Iterable<?>) entities;
+        } catch (ReflectiveOperationException ignored) {
+        }
+        return java.util.Collections.emptyList();
+    }
+
+    private static boolean isHopperEnabled(@NotNull Block hopper) {
+        try {
+            Object data = hopper.getClass().getMethod("getBlockData").invoke(hopper);
+            Object result = data.getClass().getMethod("isEnabled").invoke(data);
+            return Boolean.TRUE.equals(result);
+        } catch (ReflectiveOperationException ignored) {
+            return !hopper.isBlockPowered();
+        }
+    }
+
+    private static boolean moveOne(
+        @NotNull Block furnaceBlock, @NotNull Inventory target,
+        @NotNull java.util.List<ItemStack> sourceSlots, int slot,
+        @NotNull FurnaceContext ctx
+    ) {
+        ItemStack sourceStack = sourceSlots.get(slot);
+        if (ItemCompat.isEmpty(sourceStack)) return false;
+        ItemStack single = sourceStack.clone();
+        single.setAmount(1);
+        Inventory source = ((Furnace) furnaceBlock.getState()).getInventory();
+        org.bukkit.event.inventory.InventoryMoveItemEvent event =
+            new org.bukkit.event.inventory.InventoryMoveItemEvent(source, single, target, false);
+        Bukkit.getPluginManager().callEvent(event);
+        if (event.isCancelled() || ItemCompat.isEmpty(event.getItem())) return false;
+        ItemStack[] targetSnapshot = cloneContents(target.getContents());
+        Map<Integer, ItemStack> leftover = target.addItem(event.getItem().clone());
+        if (!leftover.isEmpty()) {
+            target.setContents(targetSnapshot);
+            return false;
+        }
+        sourceStack.setAmount(sourceStack.getAmount() - 1);
+        if (sourceStack.getAmount() <= 0) sourceSlots.set(slot, ItemCompat.empty());
+        refreshSessions(ctx);
+        ctx.dirty = true;
+        return true;
+    }
+
+    private static ItemStack[] cloneContents(ItemStack[] contents) {
+        ItemStack[] result = new ItemStack[contents.length];
+        for (int i = 0; i < contents.length; i++) {
+            result[i] = ItemCompat.isEmpty(contents[i]) ? null : contents[i].clone();
+        }
+        return result;
     }
 
     public static void flushAll() {
         for (FurnaceContext ctx : CONTEXTS.values()) {
             if (ctx.dirty || ctx.data.hasAny()) {
                 saveToNbt(ctx);
+            }
+        }
+    }
+
+    public static void refreshSessions(@NotNull FurnaceContext ctx) {
+        for (FureamScreenInventory session : ctx.sessions.values()) {
+            session.burnTime = ctx.burnTime;
+            session.fuelTimeTotal = Math.max(1, ctx.fuelTimeTotal);
+            session.cookTime = ctx.cookTime;
+            session.cookTimeTotal = Math.max(1, ctx.cookTimeTotal);
+            session.refreshVisuals();
+        }
+    }
+
+    public static void reconcileConfiguration() {
+        for (FurnaceContext ctx : CONTEXTS.values()) {
+            World world = ctx.getWorld();
+            if (world == null || !world.isChunkLoaded(ctx.pos.x >> 4, ctx.pos.z >> 4)) continue;
+
+            Block block = world.getBlockAt(ctx.pos.x, ctx.pos.y, ctx.pos.z);
+            BlockState state = block.getState();
+            if (!(state instanceof Furnace) || FureamMain.getFurnaceType(block) != ctx.type) {
+                closeSessions(ctx);
+                continue;
+            }
+
+            boolean enabled = isEnabled(world, ctx.type);
+            if (enabled && ctx.passiveProjected) {
+                resumeActive(ctx, (Furnace) state);
+                initializeInputIdentity(ctx);
+            } else if (!enabled && !ctx.passiveProjected) {
+                closeSessions(ctx);
+                projectPassiveLane(ctx, (Furnace) state);
+            }
+            saveToNbt(ctx);
+        }
+    }
+
+    public static void shutdown() {
+        for (FurnaceContext ctx : CONTEXTS.values()) {
+            closeSessions(ctx);
+        }
+        flushAll();
+        CONTEXTS.clear();
+    }
+
+    public static void closeSessions(@NotNull FurnaceContext ctx) {
+        for (FureamScreenInventory session : ctx.sessions.values()) {
+            for (org.bukkit.entity.HumanEntity viewer :
+                new java.util.ArrayList<>(session.bukkitInventory.getViewers())) {
+                viewer.closeInventory();
+            }
+        }
+        ctx.sessions.clear();
+    }
+
+    private static void validateSessions(
+        @NotNull FurnaceContext ctx, @NotNull Block block, boolean enabled
+    ) {
+        Iterator<Map.Entry<UUID, FureamScreenInventory>> iterator = ctx.sessions.entrySet().iterator();
+        while (iterator.hasNext()) {
+            Map.Entry<UUID, FureamScreenInventory> entry = iterator.next();
+            org.bukkit.entity.Player player = Bukkit.getPlayer(entry.getKey());
+            boolean valid = enabled && player != null && player.isOnline() &&
+                player.getWorld().equals(block.getWorld()) &&
+                player.getLocation().distanceSquared(block.getLocation().add(0.5, 0.5, 0.5)) <= 64.0 &&
+                FureamMain.getFurnaceType(block) == ctx.type &&
+                player.getOpenInventory().getTopInventory().equals(entry.getValue().bukkitInventory);
+            if (!valid) {
+                if (player != null && player.isOnline()) player.closeInventory();
+                ctx.sessions.remove(entry.getKey(), entry.getValue());
             }
         }
     }

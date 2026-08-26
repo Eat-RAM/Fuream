@@ -1,139 +1,113 @@
-# Fuream — Spigot/Paper 移植版
+# Fuream Spigot/Purpur 移植版
 
-Fuream（"熔炉格子扩容 & 经验累积 & 配方冲突解决，三合一"）原为 **Fabric 1.20.1 服务端模组**（`/tmp/workspace/Fuream`）。本工程是它的移植：引擎 / GUI / 漏斗 / 配置使用 Bukkit API；持久化使用 NBT-API，并在炉子方块实体的读写方法上安装轻量字节码钩子，把数据写入方块实体**真实根 NBT**，NBT 路径与原 Fabric 实现一致。
+这是 Fabric 1.20.1 服务端模组 Fuream 的 Bukkit 移植。插件提供可扩展的熔炉输入、燃料和输出槽，累积经验，以及冲突配方选择，并保留 Fabric 使用的根级 `FureamData` NBT 结构。
 
-## 功能（与原模组 1:1）
+## 版本与 Jar
 
-- **熔炉格子扩容**：每座熔炉拥有可配置的虚似行列（默认 9 输入 / 9 燃料 / 9 输出），实际 27+ 格空间。玩家打开的是自定义 9x6 玻璃面板 GUI（燃料条 / 进度条 / 边框 / 翻页）。
-- **经验累积**：每次合成把配方经验累积到熔炉上，不自动发放；点击 GUI 第 6 行第 5 格（绿色经验指示器）或拆炉时作为经验球发放。
-- **配方冲突解决**：把原料放进 GUI 第 6 行第 1 格（配方设置槽），用 46/47 两个按钮在冲突配方之间切换，结果预览在第 48 格；选择按原料持久化（`overriddenRecipes`）。
-- **漏斗/自动化**：漏斗按列交互——上方喂输入、侧方喂燃料、下方抽取产出（走香草槽作为"通道"），空桶余物会被收回。
-- **每世界配置**：`<世界文件夹>/fuream.json`，字段/语义/默认惰性行为与原模组完全一致。
-- **破坏掉落**：拆炉掉落全部虚似行物品 + 经验。
+| 服务端版本 | 使用文件 | `api-version` | 最低 Java |
+| --- | --- | --- | --- |
+| 1.7-1.12.x | `fuream-legacy-1.7-1.12.jar` | 无 | Java 8 |
+| 1.13-1.20.4 | `fuream-flattening-1.13-1.20.4.jar` | `1.13` | Java 8 或服务端要求版本 |
+| 1.20.5-26.2 | `fuream-components-1.20.5-26.2.jar` | `1.20.5` | 服务端要求版本 |
 
-## 兼容性与依赖
+保证范围是 Spigot 和 Purpur。三个 Jar 使用同一套配置和 `FureamData` 格式，世界升级时不需要手动转换。插件主体编译为 Java 8 字节码；高版本服务器仍须使用该版本服务端要求的 Java。
 
-- Spigot 1.20.1 与 Paper 1.20.1（`paper` 内核为超集，直接可用）。
-- 目标字节码 Java 17（`options.release = 17`），可用 JDK 17+ 编译/运行。
-- **运行时依赖：NBT-API 插件（de.tr7zw Item-NBT-API ≥ 2.13）**，需放入 `plugins/`。本插件通过 `depend: [NBTAPI]` 声明依赖；Byte Buddy 与 agent 已打入插件 jar，无需另装。
-- Spigot/Paper 的香草方块实体会丢弃未知根标签，因此不能仅调用 `NBT.modify(BlockState)`。插件会在 `onLoad` 阶段动态安装炉子 `load/save` 钩子；安装失败时插件会拒绝启用，绝不退回 PDC。Java 21 会打印动态 agent 警告，可在启动参数加入 `-XX:+EnableDynamicAgentLoading` 消除该警告。
+插件没有 NBTAPI 或其他外置插件依赖。Byte Buddy、Java 8 JRE 自附加所需的 JNA，以及原生 NBT 桥均已打入 Jar。
 
-## NBT 路径（与原 Fabric 实现一致）
+## 行为
 
-数据存于方块实体（熔炉 TileEntity）的真实 NBT，不用 PDC：
+- 每种炉子可分别配置输入、燃料和输出槽数量，超过一页时可翻页。
+- 每位玩家有独立的 GUI 会话和页码；只有炉子内的物品数据共享。
+- 支持拖拽、双击、数字键、丢弃键、Shift 点击、输出游标和燃料区空桶操作。
+- 1.13+ 使用服务端配方注册顺序选取首个匹配配方；冲突列表按稳定配方 ID 排序并记住选择。
+- 1.7-1.12 只使用原版唯一熔炉配方，不显示配方选择功能；旧存档内的 override 数据会保留但忽略。
+- 输出可合并并分散到多个槽。湿海绵只有在燃料区另有空槽时才把桶转换为水桶。
+- 自定义烧炼会触发服务器版本支持的 Bukkit 熔炉事件，并接受取消、燃烧时间、烧炼时间和产物修改。
+- 漏斗及漏斗矿车通过原生三槽投影和 `InventoryMoveItemEvent` 交互；底部先抽桶/水桶，再抽输出。
+- 比较器只观察 Fabric 的输入、燃料、输出三槽遮罩视图，而不是全部扩展槽。
+- 炉子锁、八格使用距离、区块状态和方块类型会在 GUI 会话期间持续检查。
 
-```
-(Furnace BlockEntity NBT 根)
-├─ FureamData                       复合标签（仅当 data.hasAny() 时写）
-│  ├─ Inputs                        List<Compound> { 物品NBT…, Slot:int }
-│  ├─ Fuels                         List<Compound> { 物品NBT…, Slot:int }
-│  ├─ Outputs                       List<Compound> { 物品NBT…, Slot:int }
-│  ├─ RecipeOverridingInput         Compound 物品NBT（空物品时为 {}）
-│  ├─ OverriddenRecipes             List<Compound> { 物品NBT…, RecipeId:string }
-│  ├─ RunningRecipe                 String（可选，当前熔炼配方 id）
-│  └─ Xp                            Float
-├─ BurnTime / CookTime / CookTimeTotal   Short（香草 BE 根部字段，与原模组
-│                                       ——由香草引擎写入——同路径）
-└─ Items                            （香草熔炉原 3 格物品栏，作自动化通道）
-```
+## 原生 NBT
 
-- `FureamData` 复合标签、内部各键名、item `Slot`/`RecipeId` 键、`Xp` 类型均为原 Fabric `FureamFurnaceData.writeNbt/readNbt` 的原样结构。
-- 旧 Spigot 版本误写入 `PublicBukkitValues` 的数据会在首次加载方块时自动迁移到根 NBT，并移除 Fuream 自己的旧 PDC 键；其他插件的 PDC 不受影响。
-- 要迁移回 Fabric 时，请先在 Fuream Spigot 插件仍启用的情况下正常停服，然后直接用 Fabric 打开该存档。不要先卸载插件再让 Spigot/Paper 加载并保存区块；香草方块实体不识别 `FureamData`，可能在下次保存时将它丢弃。
-- `BurnTotal`（相当于香草 `fuelTime`）按香草行为**不持久化**（重载后重新点燃）。
+数据直接存于炉子方块实体根 NBT，不使用 PDC：
 
-## 更新日志 — Fuream-update1（跟随上游）
-
-已按 `Fuream-update1`（新版 Fabric 实现）跟进移植的功能：
-
-- **香草物品迁移**：熔炉无可用的 `FureamData` 标签时（升级前/被接管前是普通香草熔炉），把其香草 3 格物品栏并入虚似行（槽0→输入、槽1→燃料、槽2→输出），并清空通道防重复（对应新版 `AbstractFurnaceBlockEntityMixin.readNbt`；实现在 `FureamDataCodec.migrateVanillaLane`，由 `FurnaceManager` 注册时调用）。
-- **清空语义**：清除虚似行时同步清空配方设置输入（对应新版 `clear()`；`FureamFurnaceData.clearRows()`，拆炉时使用）。
-- **tick 头部保证虚似行可用**：引擎每 tick 在熔炼前 `data.ensureRows(...)` 已覆盖（对应新版 `extendInventories` 提前到 `tick` HEAD；逻辑不变，无需另行移植）。
-
-上游其余改动均为文档/空白/未用 import 清理，无行为差异。
-
-## 更新日志 — Fuream-update2（跟随上游）
-
-- **可配置 GUI 外观 + i18n**（核心功能）：`FureamWorldConfig` 扩展”外观“（10 个物品 id，每类型）与“i18n”（20 条标题/提示，含 `%d`/`%.1f` 占位符）；`fuream.json` 新增 30 个 `gui_*` 键，支持单值作用于所有类型或按类型对象。默认值与 Fabric 新实现一致（含燃料条提示文本由 “Remaining:” 改为 “Available: %d / %d”）。
-  - 移植：`api/FureamWorldConfig`（默认值 + 映射）、`api/WorldConfigLoader`（两种形式的解析）、`screen/FurnaceGui`（按配置解析物品 id → `Registry.MATERIAL`，失败回退默认；全部标题/提示经 `String.format`）。
-- **配置类重构（对齐上游）**：Fabric 把配置创建/解析迁到新类 `FureamWorldConfigImpl`（替代 `FureamMain.newWorldConfig/readWorldConfig`）；Spigot 侧本身即单一具体配置类，语义等价（默认值/解析行为不变）。
-- **`FureamScreenInventory`**：取消静态玻璃片常量，改为每 GUI 从配置解析；XP 显示改用浮点缓存比较。Spigot 侧对应 `FurnaceGui` 同步改造。
-- **`FureamScreenHandler.quickMove`**：改为持有原物品引用并返回移动前拷贝 —— 仅返回值语义差异，Spigot 侧为事件式快移，无需移植。
-- 新增 `api/package-info.java`（文档）。
-
-## 配置
-
-每个世界的 `world 文件夹/fuream.json`（与原模组格式一致）：
-
-```json
-{
-  "input_slot_count": { "FURNACE": 9, "SMOKER": 9, "BLAST_FURNACE": 9 },
-  "fuel_slot_count":  { "FURNACE": 9, "SMOKER": 9, "BLAST_FURNACE": 9 },
-  "output_slot_count": { "FURNACE": 9, "SMOKER": 9, "BLAST_FURNACE": 9 },
-  "enabled_furnace_types": ["FURNACE", "SMOKER", "BLAST_FURNACE"]
-}
+```text
+Furnace BlockEntity root
+|- FureamData
+|  |- Inputs
+|  |- Fuels
+|  |- Outputs
+|  |- RecipeOverridingInput
+|  |- OverriddenRecipes
+|  |- RunningRecipe
+|  `- Xp
+|- BurnTime
+|- CookTime
+`- CookTimeTotal
 ```
 
-- 文件缺失 → 全部惰性（不改任何熔炉，香草行为 100% 保留）。
-- 槽位计数只接受正数；未知类型名被忽略；数量超过 9 自动翻页。
-- **GUI 外观与 i18n（Fuream-update2）**：`gui_*` 键可整体配置每类熔炉的装饰物品与文案（边框、燃料条左右、进度条完成/剩余、上一/下一配方按钮、经验指示器、上一/下一页按钮；标题/提示含 `%d`、`%.1f` 占位符）。每个键接受两种形式：
-  - 单值：`"gui_border_item_id": "minecraft:black_stained_glass_pane"`（作用于所有类型）
-  - 按类型对象：`"gui_xp_indicator_item_id": {"FURNACE": "minecraft:emerald"}`（缺省类型保持默认）
-  - 非法物品 id / 未知类型名被忽略并回退默认；默认值与 Fabric 实现完全一致（完整示例见 `docs/fuream.example.json`）。
-- 运行中改配置用 `/fuream reload`（权限 `fuream.reload`）。
-- `/fuream status` 查看各世界启用情况。
+物品编码由运行版本适配：1.12 及以前保留数字 ID/耐久值，1.13-1.20.4 使用扁平化物品 NBT，1.20.5+ 使用数据组件格式。`FureamData` 的键名和层级保持不变，可用于 Fabric 1.20.1 -> Spigot/Purpur -> Fabric 的往返迁移。
+
+插件在 `onLoad` 阶段为当前 NMS 炉子类匹配加载/保存方法并安装根 NBT 钩子。如果钩子安装失败，插件会在接管任何炉子前拒绝启用，以免静默丢失扩展槽物品。旧版本曾写入 `PublicBukkitValues` 的 Fuream 数据会在首次加载时迁移到根级标签，其他插件的 PDC 不受影响。
+
+在切回 Fabric 前，应让 Fuream 插件保持启用并正常停服。不要先移除插件再用 Bukkit 服务端加载和保存世界，否则原版方块实体可能丢弃未知标签。
+
+## 启用、禁用与配置
+
+普通世界的配置文件是 `<world>/fuream.json`。槽位和 GUI 外观/i18n 字段接受 Fabric 配置格式；写回配置时会完整保存全部已知字段，并保留第三方未知 JSON 字段。
+
+下界和末地按以下顺序查找配置：
+
+1. 当前维度的 `fuream.json`
+2. 当前维度的 `serverconfig/fuream.json` 或 `serverconfig/fuream.json5`
+3. `server.properties` 的 `level-name` 所指主世界中的相同路径
+
+维度世界没有找到配置时只使用内存默认值，不会自动生成文件。普通世界没有配置时会在自己的世界目录创建默认文件，因此独立普通世界继续保持独立配置。
+
+没有 `FureamData` 且未启用的炉子不会被迁移或清空。已有 `FureamData` 但当前禁用的炉子进入被动模式：扩展槽仍保存在 NBT，首个有效输入、燃料和输出投影到原版三槽运行。重新启用时会原子收回投影，不复制物品。配置重载、区块卸载和停服都会关闭失效 GUI 并同步数据。
+
+管理命令：
+
+```text
+/fuream reload
+/fuream status
+```
+
+`status` 会显示当前版本适配器、根 NBT 钩子状态、每个世界启用的炉子类型及实际配置来源。
 
 ## 构建
 
-```bash
-cd FureamSpigot
-./gradlew build          # 产物: build/libs/Fuream-1.0.0.jar (+ sources jar)
-./gradlew test           # 单元测试（引擎/配置/布局；NBT 持久化需实机验证）
+在仓库根目录执行：
+
+```powershell
+.\gradlew.bat :spigot:test :spigot:assemble
 ```
 
-构建使用工程内 wrapper（Gradle 8.7，`gradle.properties` 指定 JDK 21 路径；若你的 JDK 21 路径不同请修改 `org.gradle.java.home`，或用系统 JDK 17+ 移除该行）。NBT-API 通过 `repo.codemc.io` 下载（`compileOnly`）。
+产物位于 `spigot/build/libs/`：
 
-## 安装 / 实机验收
+```text
+fuream-legacy-1.7-1.12.jar
+fuream-flattening-1.13-1.20.4.jar
+fuream-components-1.20.5-26.2.jar
+```
 
-1. 安装 NBT-API 插件（≥ 2.13）到 `plugins/`。
-2. 把 `Fuream-1.0.0.jar` 放入 `plugins/`。
-3. 启动 1.20.1 Spigot/Paper，在默认世界根目录放入 `fuream.json`（见上）。
-4. `/fuream status` 应显示已启用的类型与槽位数。
+## 验证状态
 
-验收清单见 `docs/acceptance.md`。
+纯核心测试覆盖多槽插入/合并、跨槽产出、湿海绵、比较器遮罩、经验与配置完整往返等行为。使用 `Z:\fuream-servers` 中的 Jar 作为只读模板，在一次性本地目录实测了：
 
-## 与原 Fabric 工程的文件对照
-
-| Fabric（Fuream） | Spigot 移植 |
+| 服务端 | 结果 |
 | --- | --- |
-| `FureamMain` | `FureamPlugin` + `hook/FurnaceManager` |
-| `api/FureamWorldConfig` / `WorldConfigLoader` | 同（Gson 解析 `fuream.json`，语义逐条一致） |
-| `data/FureamFurnaceData` | 同（结构/字段一致） |
-| `data/FureamFurnaceData.writeNbt/readNbt`（存于 BE 的 `FureamData` 标签） | `data/FureamDataCodec`（经 de.tr7zw NBT-API 写入真实 BE NBT，路径逐字节一致） |
-| `mixin` 中 `FureamData` NBT 持久化注入（`readNbt`/`writeNbt` @Inject） | `nbt/FurnaceNbtInstrumentation` + `FurnaceRootNbtBridge` + `FurnaceManager` |
-| `logic/FureamFurnaceLogic`（引擎部分） | `logic/FureamFurnaceEngine`（自研引擎，注：原模组把引擎注释保留为规范，此处按其复刻） |
-| `logic/FureamFurnaceLogic`（燃料/配方） | `logic/FuelTable`（香草 1.20.1 燃料表，自字节码逐条导出）+ `logic/BukkitCookingRecipes` |
-| `screen/FureamScreenHandler` / `FureamScreenInventory` | `screen/FurnaceGuiLayout` + `screen/FurnaceGui` + `hook/GuiListener`（Bukkit 事件版） |
-| `util/MaskedInventory` / `FurnaceForHopperInventory` | 不需要（引擎直接读写虚似行；漏斗走 `hook/HopperListener`） |
-| mixin（`AbstractFurnaceBlockEntity` / `HopperBlockEntity` / `AbstractFurnaceBlock` / `MinecraftServer`） | `hook/*` 监听器 + 每 tick 调度 |
+| Spigot 1.14.4 | 插件加载、根 NBT 钩子、真实熔炼与持久化通过 |
+| Purpur 1.15.2、1.16.5 | 纯 Java 8 JRE 下原生自附加、根 NBT 钩子和插件启用通过 |
+| Purpur 1.17.1、1.18.2、1.19.4 | 根 NBT 钩子和插件启用通过 |
+| Purpur 1.20.1 | 熔炼、启停无损投影、多槽输出、比较器通过 |
+| Purpur 1.20.4 | 根 NBT 钩子、插件启用和关闭通过 |
+| Purpur 1.20.6 | 数据组件物品读写、熔炼与持久化通过 |
+| Purpur 1.21.1 | 根 NBT 钩子、插件启用和关闭通过 |
+| Purpur 1.21.4 | 数据组件物品读写、熔炼与持久化通过 |
 
-## 已知取舍
+本次可用模板中没有 1.7.10、1.8.8、1.12.2、1.13.2 和 26.2 服务端 Jar，因此这些边界版本只完成了编译期隔离、1.8.8 API 依赖扫描和版本能力测试，发布前仍应补做对应服务端启动及手工 GUI 验收。双玩家独立分页、距离、锁和快捷键也仍需在目标服务器上做人工验收。
 
-- GUI 双击拾取（Double-Click 汇总）、创造模式中键取整格在自定义视图上不生效（按原模组规则已被取消）。
-- 漏斗只做整格投递拦截（避免部分移动的记账复杂度）；少量不匹配物品会留在漏斗内，符合香草拒绝行为。
+## 已知保留问题
 
-## 目录结构
-
-```
-src/main/java/io/github/eat_ram/fuream/
-  api/       FurnaceType, FureamWorldConfig, WorldConfigLoader
-  data/      FureamFurnaceData（Fabric 兼容的 NBT 数据结构）
-  nbt/       炉子方块实体 load/save 字节码钩子与根 NBT 桥接
-  logic/     FuelTable, CookingRecipeQuery(+Bukkit), FureamFurnaceEngine
-  screen/    FurnaceGuiLayout, FurnaceGui
-  hook/      FurnaceManager, GuiListener, FurnaceOpenListener, HopperListener, LifecycleListener
-  util/      StackUtil, ItemStackIo(+Bukkit), KeyableItemStack, DefaultableItemList, FurnacePos
-  FureamPlugin.java
-src/main/resources/plugin.yml
-src/test/java/...  JUnit 5 测试（无服务端依赖，全部离线可跑）
-```
+破坏熔炉时仍会掉落“配方设置输入槽”的物品。这是 Fabric 基准版本本身的已知问题，为保持基准行为，本移植不修复这一项。

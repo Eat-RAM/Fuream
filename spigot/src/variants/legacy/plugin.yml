@@ -1,7 +1,6 @@
 name: Fuream
 version: 0.0.1
 main: io.github.eat_ram.fuream.FureamMain
-api-version: '1.13'
 commands:
   fuream:
     description: Fuream plugin management

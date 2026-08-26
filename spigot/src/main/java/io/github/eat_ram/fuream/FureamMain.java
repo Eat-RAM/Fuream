@@ -1,28 +1,33 @@
 package io.github.eat_ram.fuream;
 
 import java.io.File;
+import java.io.FileInputStream;
 import java.util.Locale;
 import java.util.Map;
+import java.util.Properties;
 import java.util.WeakHashMap;
+import java.util.logging.Level;
 
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
 import io.github.eat_ram.fuream.hook.BlockBreakListener;
+import io.github.eat_ram.fuream.hook.BlockExplodeListener;
 import io.github.eat_ram.fuream.hook.ChunkListener;
+import io.github.eat_ram.fuream.hook.ComparatorListener;
 import io.github.eat_ram.fuream.hook.FurnaceManager;
 import io.github.eat_ram.fuream.hook.FurnaceOpenListener;
 import io.github.eat_ram.fuream.hook.GuiListener;
 import io.github.eat_ram.fuream.hook.HopperListener;
+import io.github.eat_ram.fuream.compat.ServerVersion;
+import io.github.eat_ram.fuream.compat.VersionAdapters;
 import io.github.eat_ram.fuream.nbt.FurnaceNbtInstrumentation;
 import org.bukkit.Bukkit;
 import org.bukkit.Chunk;
 import org.bukkit.Material;
 import org.bukkit.World;
-import org.bukkit.block.BlastFurnace;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
 import org.bukkit.block.Furnace;
-import org.bukkit.block.Smoker;
 import org.bukkit.command.Command;
 import org.bukkit.command.CommandExecutor;
 import org.bukkit.command.CommandSender;
@@ -38,6 +43,7 @@ import org.jetbrains.annotations.Nullable;
 public class FureamMain extends JavaPlugin implements Listener, CommandExecutor {
     public static final String DATA_KEY = "FureamData";
     public static final Map<@NotNull World, @NotNull FureamWorldConfig> WORLD_CONFIGS = new WeakHashMap<>();
+    public static final Map<@NotNull World, @NotNull File> WORLD_CONFIG_SOURCES = new WeakHashMap<>();
     private static FureamMain INSTANCE;
     private boolean rootNbtReady;
 
@@ -54,7 +60,7 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
             this.getLogger().severe(
                 "Unable to install furnace root-NBT hooks; refusing to fall back to PDC: " + e
             );
-            e.printStackTrace();
+            this.getLogger().log(Level.SEVERE, "Root-NBT hook installation failed", e);
         }
     }
 
@@ -67,18 +73,19 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
             return;
         }
 
-        if (!this.getServer().getPluginManager().isPluginEnabled("NBTAPI")) {
-            this.getLogger().severe("Item-NBT-API is required for Fuream to operate! Please install NBT-API plugin.");
-            this.getServer().getPluginManager().disablePlugin(this);
-            return;
-        }
-
         // Register listeners
         this.getServer().getPluginManager().registerEvents(this, this);
         this.getServer().getPluginManager().registerEvents(new FurnaceOpenListener(), this);
         this.getServer().getPluginManager().registerEvents(new GuiListener(), this);
         this.getServer().getPluginManager().registerEvents(new HopperListener(), this);
+        this.getServer().getPluginManager().registerEvents(new ComparatorListener(), this);
         this.getServer().getPluginManager().registerEvents(new BlockBreakListener(), this);
+        try {
+            Class.forName("org.bukkit.event.block.BlockExplodeEvent", false, this.getClassLoader());
+            this.getServer().getPluginManager().registerEvents(new BlockExplodeListener(), this);
+        } catch (ClassNotFoundException ignored) {
+            // BlockExplodeEvent was added after the 1.7 API.
+        }
         this.getServer().getPluginManager().registerEvents(new ChunkListener(), this);
 
         // Load configs and scan loaded chunks for existing furnaces
@@ -106,8 +113,7 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
 
     @Override
     public void onDisable() {
-        FurnaceManager.flushAll();
-        FurnaceManager.CONTEXTS.clear();
+        FurnaceManager.shutdown();
         this.getLogger().info("Fuream (Spigot) disabled successfully!");
     }
 
@@ -123,24 +129,19 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
 
     public static void loadWorldConfig(@NotNull World world) {
         FureamWorldConfigImpl config = new FureamWorldConfigImpl();
-        File worldFolder = world.getWorldFolder();
-        File configFile = new File(worldFolder, "fuream.json");
-        File serverconfigFile = new File(new File(worldFolder, "serverconfig"), "fuream.json");
-        File serverconfigJson5 = new File(new File(worldFolder, "serverconfig"), "fuream.json5");
-
-        File targetFile = null;
-        if (configFile.exists()) {
-            targetFile = configFile;
-        } else if (serverconfigFile.exists()) {
-            targetFile = serverconfigFile;
-        } else if (serverconfigJson5.exists()) {
-            targetFile = serverconfigJson5;
-        } else {
-            targetFile = configFile;
+        File targetFile = findExistingConfig(world.getWorldFolder());
+        boolean dimension = world.getEnvironment() == World.Environment.NETHER ||
+            world.getEnvironment() == World.Environment.THE_END;
+        File mainWorldFolder = getMainWorldFolder();
+        if (targetFile == null && dimension) {
+            targetFile = findExistingConfig(mainWorldFolder);
+        }
+        if (targetFile == null && !dimension) {
+            targetFile = new File(world.getWorldFolder(), "fuream.json");
             try {
                 FureamWorldConfigImpl.writeWorldConfig(config, targetFile);
             } catch (Exception e) {
-                Bukkit.getLogger().warning("Failed to create default fuream.json for world " + world.getName() + ": " + e.getMessage());
+                Bukkit.getLogger().warning("Failed to create default fuream.json at " + targetFile + ": " + e.getMessage());
             }
         }
 
@@ -152,6 +153,33 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
             }
         }
         WORLD_CONFIGS.put(world, config);
+        if (targetFile == null) {
+            WORLD_CONFIG_SOURCES.remove(world);
+        } else {
+            WORLD_CONFIG_SOURCES.put(world, targetFile.getAbsoluteFile());
+        }
+    }
+
+    private static @Nullable File findExistingConfig(@NotNull File worldFolder) {
+        File direct = new File(worldFolder, "fuream.json");
+        if (direct.isFile()) return direct;
+        File serverConfig = new File(new File(worldFolder, "serverconfig"), "fuream.json");
+        if (serverConfig.isFile()) return serverConfig;
+        File json5 = new File(new File(worldFolder, "serverconfig"), "fuream.json5");
+        return json5.isFile() ? json5 : null;
+    }
+
+    private static @NotNull File getMainWorldFolder() {
+        File container = Bukkit.getWorldContainer();
+        Properties properties = new Properties();
+        File propertiesFile = new File("server.properties");
+        try (FileInputStream input = new FileInputStream(propertiesFile)) {
+            properties.load(input);
+        } catch (Exception ignored) {
+        }
+        String levelName = properties.getProperty("level-name", "world").trim();
+        if (levelName.isEmpty()) levelName = "world";
+        return new File(container, levelName);
     }
 
     public static @Nullable FureamWorldConfig getWorldConfig(@Nullable World world) {
@@ -177,16 +205,17 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
         }
         if (obj instanceof Block) {
             Material mat = ((Block) obj).getType();
-            if (mat == Material.FURNACE) return FurnaceType.FURNACE;
-            if (mat == Material.SMOKER) return FurnaceType.SMOKER;
-            if (mat == Material.BLAST_FURNACE) return FurnaceType.BLAST_FURNACE;
+            if (mat == Material.FURNACE || "BURNING_FURNACE".equals(mat.name())) return FurnaceType.FURNACE;
+            try {
+                if (mat == Material.SMOKER) return FurnaceType.SMOKER;
+                if (mat == Material.BLAST_FURNACE) return FurnaceType.BLAST_FURNACE;
+            } catch (NoSuchFieldError e) {
+                // 1.13 and earlier do not define these materials.
+            }
             return null;
         }
         if (obj instanceof BlockState) {
-            if (obj instanceof BlastFurnace) return FurnaceType.BLAST_FURNACE;
-            if (obj instanceof Smoker) return FurnaceType.SMOKER;
-            if (obj instanceof Furnace) return FurnaceType.FURNACE;
-            return null;
+            return getFurnaceType(((BlockState) obj).getBlock());
         }
         return null;
     }
@@ -201,16 +230,23 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
             for (World w : Bukkit.getWorlds()) {
                 loadWorldConfig(w);
             }
+            FurnaceManager.reconcileConfiguration();
             sender.sendMessage("§a[Fuream] World configurations reloaded!");
             return true;
         }
 
         if (args.length > 0 && "status".equalsIgnoreCase(args[0])) {
             sender.sendMessage("§e=== Fuream Status ===");
+            sender.sendMessage("§6Version adapter: §f" + VersionAdapters.current().id() +
+                " §7(" + ServerVersion.CURRENT + ")");
+            sender.sendMessage("§6Root NBT hook: §f" + (this.rootNbtReady ? "ready" : "failed"));
             for (World w : Bukkit.getWorlds()) {
                 FureamWorldConfig cfg = getWorldConfig(w);
                 if (cfg != null) {
-                    sender.sendMessage("§6World: §f" + w.getName() + " §7(Enabled: " + cfg.getEnabledFurnaceTypes() + ")");
+                    File source = WORLD_CONFIG_SOURCES.get(w);
+                    sender.sendMessage("§6World: §f" + w.getName() + " §7(Enabled: " +
+                        cfg.getEnabledFurnaceTypes() + ", Source: " +
+                        (source == null ? "in-memory defaults" : source.getPath()) + ")");
                 }
             }
             return true;

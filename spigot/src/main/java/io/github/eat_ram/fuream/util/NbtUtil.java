@@ -1,92 +1,90 @@
 package io.github.eat_ram.fuream.util;
 
+import java.lang.reflect.Field;
+import java.lang.reflect.Modifier;
 import java.util.List;
+import java.util.Map;
 
-import de.tr7zw.nbtapi.NBT;
-import de.tr7zw.nbtapi.iface.ReadWriteNBT;
-import de.tr7zw.nbtapi.iface.ReadWriteNBTCompoundList;
-import de.tr7zw.nbtapi.iface.ReadableNBT;
-import de.tr7zw.nbtapi.iface.ReadableNBTList;
-import org.bukkit.Material;
+import io.github.eat_ram.fuream.compat.ItemCompat;
+import io.github.eat_ram.fuream.nbt.NativeItemNbt;
+import io.github.eat_ram.fuream.nbt.NativeNbtCompound;
+import io.github.eat_ram.fuream.nbt.NativeNbtList;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class NbtUtil {
-    public static @NotNull ItemStack fromNbt(@Nullable ReadableNBT compound) {
-        if (compound == null || compound.getKeys().isEmpty()) {
-            return new ItemStack(Material.AIR);
-        }
-        try {
-            ItemStack stack = NBT.itemStackFromNBT(compound);
-            return stack != null ? stack : new ItemStack(Material.AIR);
-        } catch (Exception e) {
-            return new ItemStack(Material.AIR);
-        }
+    public static @NotNull ItemStack fromNbt(@Nullable NativeNbtCompound compound) {
+        return compound == null ? ItemCompat.empty() : NativeItemNbt.read(compound);
     }
 
-    public static void writeItemToCompound(@NotNull ReadWriteNBT target, @Nullable ItemStack stack) {
-        if (stack != null && !stack.getType().isAir() && stack.getAmount() > 0) {
-            ReadWriteNBT container = NBT.itemStackToNBT(stack);
-            target.mergeCompound(container);
-        }
+    public static void writeItemToCompound(@NotNull NativeNbtCompound target, @Nullable ItemStack stack) {
+        if (!ItemCompat.isEmpty(stack)) copyTags(NativeItemNbt.write(stack), target);
     }
 
     public static void writeStacks(
-        @NotNull ReadWriteNBT parent, @NotNull String key,
+        @NotNull NativeNbtCompound parent, @NotNull String key,
         @NotNull Iterable<@NotNull ItemStack> stacks
     ) {
-        ReadWriteNBTCompoundList list = resetCompoundList(parent, key);
+        NativeNbtList list = resetCompoundList(parent, key);
         int slot = 0;
         for (ItemStack stack : stacks) {
-            if (stack != null && !stack.getType().isAir() && stack.getAmount() > 0) {
-                ReadWriteNBT sub = list.addCompound();
-                ReadWriteNBT itemNbt = NBT.itemStackToNBT(stack);
-                sub.mergeCompound(itemNbt);
-                sub.setInteger("Slot", slot);
+            if (!ItemCompat.isEmpty(stack)) {
+                NativeNbtCompound sub = NativeItemNbt.write(stack);
+                sub.setInt("Slot", slot);
+                list.add(sub);
             }
-            ++slot;
+            slot++;
         }
     }
 
-    public static @NotNull ReadWriteNBTCompoundList resetCompoundList(
-        @NotNull ReadWriteNBT parent, @NotNull String key
+    public static @NotNull NativeNbtList resetCompoundList(
+        @NotNull NativeNbtCompound parent, @NotNull String key
     ) {
-        if (parent.hasTag(key)) {
-            parent.removeKey(key);
-        }
-        // NBT-API creates compound-list tags lazily. Merging an explicit empty
-        // list keeps Fabric's required `Key: []` representation even when no
-        // entries are added afterwards.
-        parent.mergeCompound(NBT.parseNBT("{\"" + key + "\":[]}"));
-        return parent.getCompoundList(key);
+        return parent.resetList(key);
     }
 
     public static void readStacks(
-        @NotNull ReadableNBT parent, @NotNull String key,
+        @NotNull NativeNbtCompound parent, @NotNull String key,
         @NotNull List<ItemStack> target
     ) {
-        if (!parent.hasTag(key)) {
-            return;
+        NativeNbtList list = parent.getList(key);
+        if (list == null) return;
+        for (int i = 0; i < list.size(); i++) {
+            NativeNbtCompound sub = list.getCompound(i);
+            if (sub == null || !sub.has("Slot")) continue;
+            int slot = sub.getInt("Slot", -1);
+            ItemStack stack = fromNbt(sub);
+            if (slot < 0 || ItemCompat.isEmpty(stack)) continue;
+            while (target.size() <= slot) target.add(ItemCompat.empty());
+            target.set(slot, stack);
         }
-        ReadableNBTList<ReadWriteNBT> list = parent.getCompoundList(key);
-        for (int i = 0; i < list.size(); ++i) {
-            ReadWriteNBT sub = list.get(i);
-            if (sub.hasTag("Slot")) {
-                int slot = sub.getInteger("Slot");
-                ItemStack stack = fromNbt(sub);
-                if (!stack.getType().isAir() && slot >= 0) {
-                    if (slot < target.size()) {
-                        target.set(slot, stack);
-                    } else {
-                        while (target.size() <= slot) {
-                            target.add(new ItemStack(Material.AIR));
-                        }
-                        target.set(slot, stack);
-                    }
+    }
+
+    private static void copyTags(NativeNbtCompound source, NativeNbtCompound target) {
+        try {
+            Field sourceField = findMapField(source.raw().getClass());
+            Field targetField = findMapField(target.raw().getClass());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> from = (Map<String, Object>) sourceField.get(source.raw());
+            @SuppressWarnings("unchecked")
+            Map<String, Object> to = (Map<String, Object>) targetField.get(target.raw());
+            to.putAll(from);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Unable to copy native item NBT", e);
+        }
+    }
+
+    private static Field findMapField(Class<?> type) {
+        for (Class<?> current = type; current != null; current = current.getSuperclass()) {
+            for (Field field : current.getDeclaredFields()) {
+                if (!Modifier.isStatic(field.getModifiers()) && Map.class.isAssignableFrom(field.getType())) {
+                    field.setAccessible(true);
+                    return field;
                 }
             }
         }
+        throw new IllegalStateException("NBT map field missing on " + type.getName());
     }
 
     private NbtUtil() {

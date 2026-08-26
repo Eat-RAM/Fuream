@@ -5,6 +5,7 @@ import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
 import io.github.eat_ram.fuream.logic.FureamFurnaceLogic;
 import io.github.eat_ram.fuream.logic.FuelTable;
+import io.github.eat_ram.fuream.compat.ItemCompat;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.block.Block;
@@ -23,14 +24,14 @@ public class HopperListener implements Listener {
         Inventory src = event.getSource();
 
         // Hopper pushing INTO Furnace
-        if (dest instanceof FurnaceInventory && dest.getLocation() != null) {
-            Location furnaceLoc = dest.getLocation();
+        Location furnaceLoc = inventoryLocation(dest);
+        if (dest instanceof FurnaceInventory && furnaceLoc != null) {
             Block block = furnaceLoc.getBlock();
             FurnaceType type = FureamMain.getFurnaceType(block);
             if (type != null) {
                 FureamWorldConfig config = FureamMain.getWorldConfig(furnaceLoc.getWorld());
                 if (config != null && config.getEnabledFurnaceTypes().contains(type)) {
-                    Location srcLoc = src.getLocation();
+                    Location srcLoc = inventoryLocation(src);
                     ItemStack itemToMove = event.getItem();
                     boolean isTop = srcLoc != null && srcLoc.getBlockY() > furnaceLoc.getBlockY();
 
@@ -49,6 +50,22 @@ public class HopperListener implements Listener {
                     }
                 }
             }
+        }
+    }
+
+    private static Location inventoryLocation(Inventory inventory) {
+        Object holder = inventory.getHolder();
+        if (holder instanceof org.bukkit.block.BlockState) {
+            return ((org.bukkit.block.BlockState) holder).getLocation();
+        }
+        if (holder instanceof org.bukkit.entity.Entity) {
+            return ((org.bukkit.entity.Entity) holder).getLocation();
+        }
+        try {
+            Object value = inventory.getClass().getMethod("getLocation").invoke(inventory);
+            return value instanceof Location ? (Location) value : null;
+        } catch (ReflectiveOperationException ignored) {
+            return null;
         }
     }
 }

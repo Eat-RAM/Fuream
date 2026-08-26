@@ -4,15 +4,13 @@ import java.util.ArrayList;
 import java.util.HashMap;
 import java.util.Map;
 
-import de.tr7zw.nbtapi.NBT;
-import de.tr7zw.nbtapi.iface.ReadWriteNBT;
-import de.tr7zw.nbtapi.iface.ReadWriteNBTCompoundList;
-import de.tr7zw.nbtapi.iface.ReadableNBT;
-import de.tr7zw.nbtapi.iface.ReadableNBTList;
+import io.github.eat_ram.fuream.compat.ItemCompat;
+import io.github.eat_ram.fuream.nbt.NativeItemNbt;
+import io.github.eat_ram.fuream.nbt.NativeNbtCompound;
+import io.github.eat_ram.fuream.nbt.NativeNbtList;
 import io.github.eat_ram.fuream.util.KeyableItemStack;
 import io.github.eat_ram.fuream.util.NbtUtil;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
@@ -36,8 +34,8 @@ public class FureamFurnaceData implements FureamData {
     public final @NotNull ArrayList<@NotNull ItemStack> fuels;
     public final @NotNull ArrayList<@NotNull ItemStack> outputs;
     public @NotNull ItemStack recipeOverridingInput;
-    public final @NotNull HashMap<@NotNull KeyableItemStack, @NotNull NamespacedKey> overriddenRecipes;
-    public @Nullable NamespacedKey runningRecipe;
+    public final @NotNull HashMap<@NotNull KeyableItemStack, @NotNull String> overriddenRecipes;
+    public @Nullable String runningRecipe;
     public float experience;
 
     public FureamFurnaceData() {
@@ -52,58 +50,58 @@ public class FureamFurnaceData implements FureamData {
     public boolean hasAny() {
         if (this.experience > 0f) return true;
         if (this.recipeOverridingInput != null &&
-            !this.recipeOverridingInput.getType().isAir()) return true;
+            !ItemCompat.isEmpty(this.recipeOverridingInput)) return true;
         if (!this.overriddenRecipes.isEmpty() || this.runningRecipe != null) return true;
         for (ItemStack s : this.inputs) {
-            if (!s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!ItemCompat.isEmpty(s)) return true;
         }
         for (ItemStack s : this.fuels) {
-            if (!s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!ItemCompat.isEmpty(s)) return true;
         }
         for (ItemStack s : this.outputs) {
-            if (!s.getType().isAir() && s.getAmount() > 0) return true;
+            if (!ItemCompat.isEmpty(s)) return true;
         }
         return false;
     }
 
     @Override
-    public void writeNbt(FureamDataHolder holder, @NotNull ReadWriteNBT nbt) {
+    public void writeNbt(FureamDataHolder holder, @NotNull NativeNbtCompound nbt) {
+        if (!this.hasAny()) return;
         NbtUtil.writeStacks(nbt, INPUTS_KEY, this.inputs);
         NbtUtil.writeStacks(nbt, FUELS_KEY, this.fuels);
         NbtUtil.writeStacks(nbt, OUTPUTS_KEY, this.outputs);
 
-        if (nbt.hasTag(RECIPE_OVERRIDING_INPUT_KEY)) {
-            nbt.removeKey(RECIPE_OVERRIDING_INPUT_KEY);
+        if (nbt.has(RECIPE_OVERRIDING_INPUT_KEY)) {
+            nbt.remove(RECIPE_OVERRIDING_INPUT_KEY);
         }
-        ReadWriteNBT overridingInputTag = nbt.getOrCreateCompound(RECIPE_OVERRIDING_INPUT_KEY);
-        if (this.recipeOverridingInput != null && !this.recipeOverridingInput.getType().isAir()) {
+        NativeNbtCompound overridingInputTag = nbt.getOrCreateCompound(RECIPE_OVERRIDING_INPUT_KEY);
+        if (!ItemCompat.isEmpty(this.recipeOverridingInput)) {
             NbtUtil.writeItemToCompound(overridingInputTag, this.recipeOverridingInput);
         }
 
-        ReadWriteNBTCompoundList list = NbtUtil.resetCompoundList(nbt, OVERRIDDEN_RECIPES_KEY);
-        for (Map.Entry<KeyableItemStack, NamespacedKey> entry : this.overriddenRecipes.entrySet()) {
+        NativeNbtList list = NbtUtil.resetCompoundList(nbt, OVERRIDDEN_RECIPES_KEY);
+        for (Map.Entry<KeyableItemStack, String> entry : this.overriddenRecipes.entrySet()) {
             ItemStack stack = entry.getKey().stack;
-            if (!stack.getType().isAir()) {
-                ReadWriteNBT sub = list.addCompound();
-                ReadWriteNBT itemNbt = NBT.itemStackToNBT(stack);
-                sub.mergeCompound(itemNbt);
-                sub.setString("RecipeId", entry.getValue().toString());
+            if (!ItemCompat.isEmpty(stack)) {
+                NativeNbtCompound sub = NativeItemNbt.write(stack);
+                sub.setString("RecipeId", entry.getValue());
+                list.add(sub);
             }
         }
 
         if (this.runningRecipe != null) {
-            nbt.setString(RUNNING_RECIPE_KEY, this.runningRecipe.toString());
-        } else if (nbt.hasTag(RUNNING_RECIPE_KEY)) {
-            nbt.removeKey(RUNNING_RECIPE_KEY);
+            nbt.setString(RUNNING_RECIPE_KEY, this.runningRecipe);
+        } else if (nbt.has(RUNNING_RECIPE_KEY)) {
+            nbt.remove(RUNNING_RECIPE_KEY);
         }
         nbt.setFloat(XP_KEY, this.experience);
-        if (nbt.hasTag("FureamInitialized")) {
-            nbt.removeKey("FureamInitialized");
+        if (nbt.has("FureamInitialized")) {
+            nbt.remove("FureamInitialized");
         }
     }
 
     @Override
-    public void readNbt(FureamDataHolder holder, @NotNull ReadableNBT nbt) {
+    public void readNbt(FureamDataHolder holder, @NotNull NativeNbtCompound nbt) {
         for (int i = 0; i < this.inputs.size(); i++) {
             this.inputs.set(i, new ItemStack(Material.AIR));
         }
@@ -114,41 +112,42 @@ public class FureamFurnaceData implements FureamData {
             this.outputs.set(i, new ItemStack(Material.AIR));
         }
 
-        if (nbt.hasTag(INPUTS_KEY)) {
+        if (nbt.has(INPUTS_KEY)) {
             NbtUtil.readStacks(nbt, INPUTS_KEY, this.inputs);
         }
-        if (nbt.hasTag(FUELS_KEY)) {
+        if (nbt.has(FUELS_KEY)) {
             NbtUtil.readStacks(nbt, FUELS_KEY, this.fuels);
         }
-        if (nbt.hasTag(OUTPUTS_KEY)) {
+        if (nbt.has(OUTPUTS_KEY)) {
             NbtUtil.readStacks(nbt, OUTPUTS_KEY, this.outputs);
         }
-        if (nbt.hasTag(RECIPE_OVERRIDING_INPUT_KEY)) {
+        if (nbt.has(RECIPE_OVERRIDING_INPUT_KEY)) {
             this.recipeOverridingInput = NbtUtil.fromNbt(nbt.getCompound(RECIPE_OVERRIDING_INPUT_KEY));
         } else {
             this.recipeOverridingInput = new ItemStack(Material.AIR);
         }
         this.overriddenRecipes.clear();
-        if (nbt.hasTag(OVERRIDDEN_RECIPES_KEY)) {
-            ReadableNBTList<ReadWriteNBT> list = nbt.getCompoundList(OVERRIDDEN_RECIPES_KEY);
-            for (int i = 0; i < list.size(); ++i) {
-                ReadWriteNBT tag = list.get(i);
-                if (tag.hasTag("RecipeId")) {
-                    String recipeIdStr = tag.getString("RecipeId");
-                    NamespacedKey key = NamespacedKey.fromString(recipeIdStr);
-                    if (key != null) {
-                        ItemStack stack = NbtUtil.fromNbt(tag);
-                        if (!stack.getType().isAir()) {
-                            stack.setAmount(1);
-                            this.overriddenRecipes.put(new KeyableItemStack(stack), key);
+        if (nbt.has(OVERRIDDEN_RECIPES_KEY)) {
+            NativeNbtList list = nbt.getList(OVERRIDDEN_RECIPES_KEY);
+            if (list != null) {
+                for (int i = 0; i < list.size(); ++i) {
+                    NativeNbtCompound tag = list.getCompound(i);
+                    if (tag != null && tag.has("RecipeId")) {
+                        String recipeIdStr = tag.getString("RecipeId");
+                        if (!recipeIdStr.isEmpty()) {
+                            ItemStack stack = NbtUtil.fromNbt(tag);
+                            if (!ItemCompat.isEmpty(stack)) {
+                                stack.setAmount(1);
+                                this.overriddenRecipes.put(new KeyableItemStack(stack), recipeIdStr);
+                            }
                         }
                     }
                 }
             }
         }
-        this.runningRecipe = nbt.hasTag(RUNNING_RECIPE_KEY)
-            ? NamespacedKey.fromString(nbt.getString(RUNNING_RECIPE_KEY))
+        this.runningRecipe = nbt.has(RUNNING_RECIPE_KEY)
+            ? nbt.getString(RUNNING_RECIPE_KEY)
             : null;
-        this.experience = nbt.hasTag(XP_KEY) ? nbt.getFloat(XP_KEY) : 0f;
+        this.experience = nbt.has(XP_KEY) ? nbt.getFloat(XP_KEY, 0f) : 0f;
     }
 }

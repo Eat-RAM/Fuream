@@ -1,329 +1,322 @@
 package io.github.eat_ram.fuream.logic;
 
+import java.lang.reflect.Constructor;
+import java.lang.reflect.Method;
 import java.util.List;
 
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
+import io.github.eat_ram.fuream.compat.BlockCompat;
+import io.github.eat_ram.fuream.compat.ItemCompat;
+import io.github.eat_ram.fuream.compat.RecipeCompat;
+import io.github.eat_ram.fuream.compat.RecipeHandle;
+import io.github.eat_ram.fuream.compat.ServerVersion;
+import io.github.eat_ram.fuream.compat.FurnaceCompat;
+import io.github.eat_ram.fuream.compat.VersionAdapters;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
 import io.github.eat_ram.fuream.util.KeyableItemStack;
+import org.bukkit.Bukkit;
 import org.bukkit.Material;
-import org.bukkit.NamespacedKey;
 import org.bukkit.World;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
-import org.bukkit.block.data.BlockData;
-import org.bukkit.block.data.type.Furnace;
-import org.bukkit.inventory.CookingRecipe;
+import org.bukkit.event.Cancellable;
+import org.bukkit.event.Event;
+import org.bukkit.event.inventory.FurnaceBurnEvent;
+import org.bukkit.event.inventory.FurnaceSmeltEvent;
 import org.bukkit.inventory.FurnaceInventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
 public abstract class FureamFurnaceEngine {
-    public static void tick(
-        @NotNull FurnaceContext ctx, @Nullable FureamWorldConfig config
-    ) {
-        FureamFurnaceData data = ctx.data;
+    public static void tick(FurnaceContext ctx, FureamWorldConfig config) {
         World world = ctx.getWorld();
         if (world == null) return;
+        FureamFurnaceData data = ctx.data;
+        int inputCount = slotCount(config.getInputSlotCount().get(ctx.type));
+        int fuelCount = slotCount(config.getFuelSlotCount().get(ctx.type));
+        int outputCount = slotCount(config.getOutputSlotCount().get(ctx.type));
+        ensureSize(data.inputs, inputCount);
+        ensureSize(data.fuels, fuelCount);
+        ensureSize(data.outputs, outputCount);
 
-        // Ensure virtual lists have at least the configured number of slots
-        int inCount = config != null ? config.getInputSlotCount().get(ctx.type) : 18;
-        int fuelCount = config != null ? config.getFuelSlotCount().get(ctx.type) : 18;
-        int outCount = config != null ? config.getOutputSlotCount().get(ctx.type) : 18;
-        while (data.inputs.size() < inCount) data.inputs.add(new ItemStack(Material.AIR));
-        while (data.fuels.size() < fuelCount) data.fuels.add(new ItemStack(Material.AIR));
-        while (data.outputs.size() < outCount) data.outputs.add(new ItemStack(Material.AIR));
-
-        // Ensure default cookTimeTotal
-        int baseCookTime = ctx.type == FurnaceType.FURNACE ? 200 : 100;
-        if (ctx.cookTimeTotal <= 0) {
-            ctx.cookTimeTotal = baseCookTime;
-        }
-
-        // Ingest and feed through vanilla furnace inventory (for seamless hopper integration)
         Block block = world.getBlockAt(ctx.pos.x, ctx.pos.y, ctx.pos.z);
-        BlockState blockState = block.getState();
-        if (blockState instanceof org.bukkit.block.Furnace) {
-            org.bukkit.block.Furnace furnaceTile = (org.bukkit.block.Furnace) blockState;
-            FurnaceInventory inv = furnaceTile.getInventory();
+        BlockState state = block.getState();
+        if (!(state instanceof org.bukkit.block.Furnace)) return;
+        org.bukkit.block.Furnace furnace = (org.bukkit.block.Furnace) state;
+        ingestVanillaLane(ctx, furnace.getInventory(), inputCount, fuelCount, outputCount);
+        FurnaceCompat.setCookTime(furnace, 0);
+        FurnaceCompat.setBurnTime(furnace, 0);
 
-            // 1. Ingest smelting slot (top hopper input)
-            ItemStack smelting = inv.getSmelting();
-            if (smelting != null && !smelting.getType().isAir() && smelting.getAmount() > 0) {
-                ItemStack remainder = insertStackIntoList(data.inputs, smelting, inCount);
-                inv.setSmelting(remainder.getType().isAir() ? null : remainder);
-                ctx.dirty = true;
-            }
-
-            // 2. Ingest fuel slot (side hopper fuel input)
-            ItemStack fuel = inv.getFuel();
-            if (fuel != null && !fuel.getType().isAir() && fuel.getAmount() > 0) {
-                ItemStack remainder = insertStackIntoList(data.fuels, fuel, fuelCount);
-                inv.setFuel(remainder.getType().isAir() ? null : remainder);
-                ctx.dirty = true;
-            }
-
-            // 3. Recover outputs stranded in the hidden vanilla result slot.
-            // Bottom hoppers pull directly from data.outputs in FurnaceManager;
-            // proactively filling this slot would hide the first smelted item
-            // from the custom GUI until a second item is produced.
-            ItemStack result = inv.getResult();
-            if (result != null && !result.getType().isAir() && result.getAmount() > 0) {
-                inv.setResult(recoverVanillaOutput(data.outputs, result, outCount));
-                ctx.dirty = true;
-            }
-
-            furnaceTile.setCookTime((short) 0);
-            furnaceTile.setBurnTime((short) 0);
-        }
-
-        boolean wasBurning = ctx.burnTime > 0;
         if (ctx.burnTime > 0) {
             ctx.burnTime--;
             ctx.dirty = true;
         }
 
-        // Find first valid input stack
-        int firstInputIdx = -1;
-        ItemStack inputStack = null;
-        for (int i = 0; i < data.inputs.size(); i++) {
-            ItemStack s = data.inputs.get(i);
-            if (!s.getType().isAir() && s.getAmount() > 0) {
-                firstInputIdx = i;
-                inputStack = s;
+        int inputSlot = firstPresent(data.inputs);
+        ItemStack input = inputSlot < 0 ? null : data.inputs.get(inputSlot);
+        updateInputIdentity(ctx, inputSlot, input);
+
+        RecipeHandle recipe = input == null ? null : getRecipeForInput(input, ctx);
+        ItemStack result = recipe == null ? null : recipe.result.clone();
+        boolean canSmelt = recipe != null && canFitAll(data.outputs, result, outputCount);
+        if (recipe != null) {
+            if (!recipe.id.equals(data.runningRecipe)) {
+                ctx.cookTime = 0;
+                ctx.cookTimeTotal = Math.max(1, recipe.cookingTime);
+                ctx.startSmeltPending = true;
+            }
+            data.runningRecipe = recipe.id;
+        } else {
+            data.runningRecipe = null;
+        }
+
+        if (ctx.burnTime <= 0 && canSmelt) {
+            ignite(ctx, block, fuelCount);
+        }
+
+        if (ctx.burnTime > 0 && canSmelt) {
+            if (ctx.startSmeltPending) {
+                int requestedTime = fireStartSmelt(block, input, recipe);
+                ctx.cookTimeTotal = Math.max(1, requestedTime);
+                ctx.startSmeltPending = false;
+                ctx.dirty = true;
+            }
+            ctx.cookTime++;
+            ctx.dirty = true;
+            if (ctx.cookTime >= Math.max(1, ctx.cookTimeTotal)) {
+                FurnaceSmeltEvent event = new FurnaceSmeltEvent(block, one(input), result.clone());
+                Bukkit.getPluginManager().callEvent(event);
+                ItemStack eventResult = event.getResult();
+                if (event.isCancelled() || ItemCompat.isEmpty(eventResult) ||
+                    !canFitAll(data.outputs, eventResult, outputCount)) {
+                    ctx.cookTime = Math.max(0, ctx.cookTimeTotal - 1);
+                } else {
+                    ItemStack remainder = insertStackIntoList(data.outputs, eventResult, outputCount);
+                    if (ItemCompat.isEmpty(remainder)) {
+                        FureamFurnaceLogic.stashExperience(recipe, data);
+                        handleWetSponge(input, data.fuels, fuelCount);
+                        decrement(data.inputs, inputSlot);
+                        ctx.cookTime = 0;
+                        data.runningRecipe = null;
+                        ctx.lastInputKey = null;
+                        ctx.lastInputSlot = -1;
+                        ctx.startSmeltPending = true;
+                    }
+                }
+            }
+        } else if (!canSmelt && ctx.cookTime > 0) {
+            ctx.cookTime = Math.max(0, ctx.cookTime - 2);
+            ctx.dirty = true;
+        }
+
+        BlockCompat.setLit(block, ctx.burnTime > 0);
+        io.github.eat_ram.fuream.hook.FurnaceManager.refreshSessions(ctx);
+    }
+
+    private static void ignite(FurnaceContext ctx, Block block, int fuelCount) {
+        int fuelSlot = firstFuel(ctx.data.fuels, fuelCount);
+        if (fuelSlot < 0) return;
+        ItemStack fuel = ctx.data.fuels.get(fuelSlot);
+        int fuelTime = FuelTable.getFuelTime(fuel);
+        if (ctx.type != FurnaceType.FURNACE) fuelTime = Math.max(1, fuelTime / 2);
+
+        FurnaceBurnEvent event = new FurnaceBurnEvent(block, one(fuel), fuelTime);
+        Bukkit.getPluginManager().callEvent(event);
+        if (event.isCancelled() || !event.isBurning() || event.getBurnTime() <= 0) return;
+
+        ctx.burnTime = event.getBurnTime();
+        ctx.fuelTimeTotal = event.getBurnTime();
+        Material lavaBucket = Material.matchMaterial("LAVA_BUCKET");
+        Material bucket = Material.matchMaterial("BUCKET");
+        if (lavaBucket != null && bucket != null && fuel.getType() == lavaBucket) {
+            ctx.data.fuels.set(fuelSlot, new ItemStack(bucket));
+        } else {
+            decrement(ctx.data.fuels, fuelSlot);
+        }
+        ctx.dirty = true;
+    }
+
+    private static int fireStartSmelt(Block block, ItemStack input, RecipeHandle recipe) {
+        if (!ServerVersion.CURRENT.atLeast(1, 18)) return recipe.cookingTime;
+        try {
+            Class<?> eventClass = Class.forName("org.bukkit.event.inventory.FurnaceStartSmeltEvent");
+            for (Constructor<?> constructor : eventClass.getConstructors()) {
+                Class<?>[] types = constructor.getParameterTypes();
+                if (types.length != 3 || !types[0].isInstance(block) || !types[1].isInstance(input) ||
+                    !types[2].isInstance(recipe.nativeRecipe)) continue;
+                Event event = (Event) constructor.newInstance(block, one(input), recipe.nativeRecipe);
+                Bukkit.getPluginManager().callEvent(event);
+                if (event instanceof Cancellable && ((Cancellable) event).isCancelled()) return Integer.MAX_VALUE;
+                Method getter = eventClass.getMethod("getTotalCookTime");
+                return ((Number) getter.invoke(event)).intValue();
+            }
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+        }
+        return recipe.cookingTime;
+    }
+
+    private static RecipeHandle getRecipeForInput(ItemStack input, FurnaceContext ctx) {
+        if (ctx.data.runningRecipe != null) {
+            RecipeHandle running = RecipeCompat.findById(input, ctx.type, ctx.data.runningRecipe);
+            if (running != null) return running;
+        }
+        if (VersionAdapters.current().supportsRecipeOverrides()) {
+            String overridden = ctx.data.overriddenRecipes.get(new KeyableItemStack(one(input)));
+            RecipeHandle selected = RecipeCompat.findById(input, ctx.type, overridden);
+            if (selected != null) return selected;
+        }
+        return RecipeCompat.findFirst(input, ctx.type);
+    }
+
+    static void handleWetSponge(ItemStack input, List<ItemStack> fuels, int maxSlots) {
+        Material wetSponge = Material.matchMaterial("WET_SPONGE");
+        Material bucket = Material.matchMaterial("BUCKET");
+        Material waterBucket = Material.matchMaterial("WATER_BUCKET");
+        if (wetSponge == null || bucket == null || waterBucket == null || input.getType() != wetSponge) return;
+
+        int bucketSlot = -1;
+        for (int i = 0; i < Math.min(maxSlots, fuels.size()); i++) {
+            if (!ItemCompat.isEmpty(fuels.get(i)) && fuels.get(i).getType() == bucket) {
+                bucketSlot = i;
                 break;
             }
         }
+        if (bucketSlot < 0) return;
+        int empty = firstEmpty(fuels, maxSlots);
+        if (empty < 0) return;
+        ItemStack found = fuels.get(bucketSlot);
+        found.setAmount(found.getAmount() - 1);
+        if (found.getAmount() <= 0) fuels.set(bucketSlot, ItemCompat.empty());
+        fuels.set(empty, new ItemStack(waterBucket));
+    }
 
-        CookingRecipe<?> matchedRecipe = null;
-        if (inputStack != null) {
-            matchedRecipe = getRecipeForInput(world, inputStack, ctx);
-        }
-
-        boolean canSmelt = false;
-        ItemStack recipeResult = null;
-        int outSlotIdx = -1;
-
-        if (matchedRecipe != null) {
-            NamespacedKey matchedKey = matchedRecipe.getKey();
-            if (!matchedKey.equals(data.runningRecipe)) {
-                data.runningRecipe = matchedKey;
-                ctx.dirty = true;
-            }
-            recipeResult = matchedRecipe.getResult();
-            outSlotIdx = findFittingOutputSlot(data.outputs, recipeResult);
-            if (outSlotIdx >= 0) {
-                canSmelt = true;
-                int cookTime = matchedRecipe.getCookingTime();
-                if (cookTime <= 0) {
-                    cookTime = (ctx.type == FurnaceType.FURNACE ? 200 : 100);
-                }
-                ctx.cookTimeTotal = cookTime;
-            }
-        }
-
-        // Light the furnace if unlit and can smelt
-        if (ctx.burnTime <= 0 && canSmelt) {
-            int firstFuelIdx = -1;
-            ItemStack fuelStack = null;
-            for (int i = 0; i < data.fuels.size(); i++) {
-                ItemStack s = data.fuels.get(i);
-                if (!s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
-                    firstFuelIdx = i;
-                    fuelStack = s;
-                    break;
-                }
-            }
-
-            if (fuelStack != null) {
-                int fuelTime = FuelTable.getFuelTime(fuelStack);
-                if (ctx.type == FurnaceType.SMOKER || ctx.type == FurnaceType.BLAST_FURNACE) {
-                    fuelTime = Math.max(1, fuelTime / 2);
-                }
-
-                ctx.burnTime = fuelTime;
-                ctx.fuelTimeTotal = fuelTime;
-                ctx.dirty = true;
-
-                // Handle recipe remainder (e.g. Lava Bucket -> Bucket in fuel slot)
-                if (fuelStack.getType() == Material.LAVA_BUCKET) {
-                    data.fuels.set(firstFuelIdx, new ItemStack(Material.BUCKET));
-                } else {
-                    fuelStack.setAmount(fuelStack.getAmount() - 1);
-                    if (fuelStack.getAmount() <= 0) {
-                        data.fuels.set(firstFuelIdx, new ItemStack(Material.AIR));
-                    }
-                }
-            }
-        }
-
-        // Cook progression
-        if (ctx.burnTime > 0 && canSmelt) {
-            ctx.cookTime++;
+    private static void ingestVanillaLane(
+        FurnaceContext ctx, FurnaceInventory inventory, int inputCount, int fuelCount, int outputCount
+    ) {
+        ItemStack smelting = inventory.getSmelting();
+        if (!ItemCompat.isEmpty(smelting)) {
+            ItemStack remainder = insertStackIntoList(ctx.data.inputs, smelting, inputCount);
+            inventory.setSmelting(ItemCompat.isEmpty(remainder) ? null : remainder);
             ctx.dirty = true;
-
-            if (ctx.cookTime >= ctx.cookTimeTotal) {
-                ctx.cookTime = 0;
-
-                // Deposit result
-                ItemStack currentOut = data.outputs.get(outSlotIdx);
-                if (currentOut.getType().isAir()) {
-                    data.outputs.set(outSlotIdx, recipeResult.clone());
-                } else if (currentOut.isSimilar(recipeResult)) {
-                    currentOut.setAmount(currentOut.getAmount() + recipeResult.getAmount());
-                    data.outputs.set(outSlotIdx, currentOut);
-                }
-
-                // Stash experience
-                FureamFurnaceLogic.stashExperience(matchedRecipe, data);
-
-                // Wet sponge drying water bucket logic
-                if (inputStack.getType() == Material.WET_SPONGE) {
-                    for (int i = 0; i < data.fuels.size(); i++) {
-                        ItemStack f = data.fuels.get(i);
-                        if (f.getType() == Material.BUCKET) {
-                            f.setAmount(f.getAmount() - 1);
-                            if (f.getAmount() <= 0) {
-                                data.fuels.set(i, new ItemStack(Material.WATER_BUCKET));
-                            } else {
-                                data.fuels.add(new ItemStack(Material.WATER_BUCKET));
-                            }
-                            break;
-                        }
-                    }
-                }
-
-                // Decrement input
-                inputStack.setAmount(inputStack.getAmount() - 1);
-                if (inputStack.getAmount() <= 0) {
-                    data.inputs.set(firstInputIdx, new ItemStack(Material.AIR));
-                }
-                data.runningRecipe = null;
-            }
-        } else {
-            if (matchedRecipe == null && data.runningRecipe != null) {
-                data.runningRecipe = null;
-                ctx.dirty = true;
-            }
-            if (ctx.cookTime > 0) {
-                ctx.cookTime = Math.max(0, ctx.cookTime - 2);
-                ctx.dirty = true;
-            }
         }
-
-        // Update block lit state
-        boolean isBurning = ctx.burnTime > 0;
-        if (wasBurning != isBurning) {
-            updateBlockLitState(world, ctx.pos.x, ctx.pos.y, ctx.pos.z, isBurning);
+        ItemStack fuel = inventory.getFuel();
+        if (!ItemCompat.isEmpty(fuel)) {
+            ItemStack remainder = insertStackIntoList(ctx.data.fuels, fuel, fuelCount);
+            inventory.setFuel(ItemCompat.isEmpty(remainder) ? null : remainder);
+            ctx.dirty = true;
         }
-
-        // Sync with open GUI
-        if (ctx.activeGui != null) {
-            ctx.activeGui.burnTime = ctx.burnTime;
-            ctx.activeGui.fuelTimeTotal = Math.max(1, ctx.fuelTimeTotal);
-            ctx.activeGui.cookTime = ctx.cookTime;
-            ctx.activeGui.cookTimeTotal = Math.max(1, ctx.cookTimeTotal);
-            ctx.activeGui.refreshVisuals();
+        ItemStack result = inventory.getResult();
+        if (!ItemCompat.isEmpty(result)) {
+            inventory.setResult(recoverVanillaOutput(ctx.data.outputs, result, outputCount));
+            ctx.dirty = true;
         }
     }
 
-    public static @NotNull ItemStack insertStackIntoList(
-        @NotNull List<ItemStack> list, @NotNull ItemStack incoming, int maxSlots
-    ) {
-        while (list.size() < maxSlots) {
-            list.add(new ItemStack(Material.AIR));
-        }
-
+    public static ItemStack insertStackIntoList(List<ItemStack> slots, ItemStack incoming, int maxSlots) {
+        if (ItemCompat.isEmpty(incoming)) return ItemCompat.empty();
+        ensureSize(slots, maxSlots);
         ItemStack remaining = incoming.clone();
-
-        // 1. Stack into existing slots
-        for (int i = 0; i < maxSlots && i < list.size(); i++) {
-            ItemStack s = list.get(i);
-            if (s != null && !s.getType().isAir() && s.isSimilar(remaining)) {
-                int space = s.getMaxStackSize() - s.getAmount();
-                if (space > 0) {
-                    int toAdd = Math.min(space, remaining.getAmount());
-                    s.setAmount(s.getAmount() + toAdd);
-                    remaining.setAmount(remaining.getAmount() - toAdd);
-                    if (remaining.getAmount() <= 0) {
-                        return new ItemStack(Material.AIR);
-                    }
+        for (int i = 0; i < maxSlots && !ItemCompat.isEmpty(remaining); i++) {
+            ItemStack current = slots.get(i);
+            if (!ItemCompat.isEmpty(current) && current.isSimilar(remaining)) {
+                int move = Math.min(remaining.getAmount(), current.getMaxStackSize() - current.getAmount());
+                if (move > 0) {
+                    current.setAmount(current.getAmount() + move);
+                    remaining.setAmount(remaining.getAmount() - move);
                 }
             }
         }
-
-        // 2. Place into empty slots
-        for (int i = 0; i < maxSlots && i < list.size(); i++) {
-            ItemStack s = list.get(i);
-            if (s == null || s.getType().isAir()) {
-                list.set(i, remaining.clone());
-                return new ItemStack(Material.AIR);
+        for (int i = 0; i < maxSlots && !ItemCompat.isEmpty(remaining); i++) {
+            if (ItemCompat.isEmpty(slots.get(i))) {
+                int move = Math.min(remaining.getAmount(), remaining.getMaxStackSize());
+                ItemStack placed = remaining.clone();
+                placed.setAmount(move);
+                slots.set(i, placed);
+                remaining.setAmount(remaining.getAmount() - move);
             }
         }
-
-        return remaining;
+        return ItemCompat.isEmpty(remaining) ? ItemCompat.empty() : remaining;
     }
 
-    static @Nullable ItemStack recoverVanillaOutput(
-        @NotNull List<ItemStack> outputs, @Nullable ItemStack vanillaResult,
-        int maxSlots
+    public static ItemStack recoverVanillaOutput(
+        List<ItemStack> outputs, ItemStack vanillaResult, int maxSlots
     ) {
-        if (vanillaResult == null || vanillaResult.getType().isAir() ||
-            vanillaResult.getAmount() <= 0) {
-            return null;
-        }
-        ItemStack remainder = insertStackIntoList(outputs, vanillaResult, maxSlots);
-        return remainder.getType().isAir() ? null : remainder;
+        if (ItemCompat.isEmpty(vanillaResult)) return null;
+        ItemStack remainder = insertStackIntoList(outputs, vanillaResult, Math.max(1, maxSlots));
+        return ItemCompat.isEmpty(remainder) ? null : remainder;
     }
 
-    private static CookingRecipe<?> getRecipeForInput(
-        World world, ItemStack input, FurnaceContext ctx
-    ) {
-        if (ctx.data.runningRecipe != null) {
-            for (CookingRecipe<?> recipe : FureamFurnaceLogic.findAllMatches(world, input, ctx.type)) {
-                if (recipe.getKey().equals(ctx.data.runningRecipe)) {
-                    return recipe;
-                }
-            }
+    private static boolean canFitAll(List<ItemStack> slots, ItemStack stack, int maxSlots) {
+        if (ItemCompat.isEmpty(stack)) return false;
+        int capacity = 0;
+        ensureSize(slots, maxSlots);
+        for (int i = 0; i < maxSlots; i++) {
+            ItemStack current = slots.get(i);
+            if (ItemCompat.isEmpty(current)) capacity += stack.getMaxStackSize();
+            else if (current.isSimilar(stack)) capacity += current.getMaxStackSize() - current.getAmount();
+            if (capacity >= stack.getAmount()) return true;
         }
-
-        NamespacedKey overridden = ctx.data.overriddenRecipes.get(new KeyableItemStack(input));
-        if (overridden != null) {
-            List<CookingRecipe<?>> matches = FureamFurnaceLogic.findAllMatches(world, input, ctx.type);
-            for (CookingRecipe<?> r : matches) {
-                if (r.getKey().equals(overridden)) {
-                    return r;
-                }
-            }
-        }
-        return FureamFurnaceLogic.findRecipe(world, input, ctx.type).orElse(null);
+        return false;
     }
 
-    private static int findFittingOutputSlot(List<ItemStack> outputs, ItemStack result) {
-        for (int i = 0; i < outputs.size(); i++) {
-            ItemStack s = outputs.get(i);
-            if (s == null || s.getType().isAir()) {
-                return i;
-            }
-            if (s.isSimilar(result) && s.getAmount() + result.getAmount() <= s.getMaxStackSize()) {
-                return i;
-            }
+    private static int firstFuel(List<ItemStack> fuels, int maxSlots) {
+        for (int i = 0; i < Math.min(maxSlots, fuels.size()); i++) {
+            if (!ItemCompat.isEmpty(fuels.get(i)) && FuelTable.isFuel(fuels.get(i))) return i;
         }
         return -1;
     }
 
-    private static void updateBlockLitState(World world, int x, int y, int z, boolean lit) {
-        Block block = world.getBlockAt(x, y, z);
-        BlockData data = block.getBlockData();
-        if (data instanceof Furnace) {
-            Furnace furnaceData = (Furnace) data;
-            if (furnaceData.isLit() != lit) {
-                furnaceData.setLit(lit);
-                block.setBlockData(furnaceData, false);
-            }
-        }
+    private static int firstPresent(List<ItemStack> stacks) {
+        for (int i = 0; i < stacks.size(); i++) if (!ItemCompat.isEmpty(stacks.get(i))) return i;
+        return -1;
+    }
+
+    private static int firstEmpty(List<ItemStack> stacks, int maxSlots) {
+        ensureSize(stacks, maxSlots);
+        for (int i = 0; i < maxSlots; i++) if (ItemCompat.isEmpty(stacks.get(i))) return i;
+        return -1;
+    }
+
+    private static void decrement(List<ItemStack> slots, int slot) {
+        ItemStack stack = slots.get(slot);
+        stack.setAmount(stack.getAmount() - 1);
+        if (stack.getAmount() <= 0) slots.set(slot, ItemCompat.empty());
+    }
+
+    private static ItemStack one(ItemStack stack) {
+        ItemStack result = stack.clone();
+        result.setAmount(1);
+        return result;
+    }
+
+    private static boolean sameKey(KeyableItemStack left, KeyableItemStack right) {
+        return left == right || left != null && left.equals(right);
+    }
+
+    static boolean updateInputIdentity(
+        FurnaceContext ctx, int inputSlot, @Nullable ItemStack input
+    ) {
+        KeyableItemStack inputKey = ItemCompat.isEmpty(input)
+            ? null : new KeyableItemStack(one(input));
+        if (inputSlot == ctx.lastInputSlot && sameKey(ctx.lastInputKey, inputKey)) return false;
+        ctx.lastInputSlot = inputSlot;
+        ctx.lastInputKey = inputKey;
+        ctx.cookTime = 0;
+        ctx.data.runningRecipe = null;
+        ctx.startSmeltPending = true;
+        ctx.dirty = true;
+        return true;
+    }
+
+    private static int slotCount(Integer configured) {
+        return Math.max(1, configured == null ? 9 : configured);
+    }
+
+    private static void ensureSize(List<ItemStack> slots, int size) {
+        while (slots.size() < size) slots.add(ItemCompat.empty());
     }
 
     private FureamFurnaceEngine() {

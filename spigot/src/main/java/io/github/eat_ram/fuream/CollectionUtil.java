@@ -15,7 +15,7 @@ public abstract class CollectionUtil {
         E defaultValue,
         @Range(from = 0, to = Integer.MAX_VALUE) int initialSize
     ) {
-        ArrayList<E> al = new ArrayList<>() {
+        ArrayList<E> al = new ArrayList<E>() {
             @SuppressWarnings("unchecked")
             private E makeDefault() {
                 if (defaultValue instanceof org.bukkit.inventory.ItemStack) {
@@ -53,7 +53,7 @@ public abstract class CollectionUtil {
     @Contract(value = "_, _, _ -> new", pure = true)
     public static <E> ListIterator<E>
     listIterator(List<E> list, int size, int index) {
-        return new ListIterator<>() {
+        return new ListIterator<E>() {
             public final boolean isListIterator = index >= 0;
             private int cursor = index < 0 ? 0 : index;
 

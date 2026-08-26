@@ -24,19 +24,11 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         if (configFile.getParentFile() != null) {
             configFile.getParentFile().mkdirs();
         }
-        JsonObject root = new JsonObject();
+        JsonObject root = readExistingObject(configFile);
 
-        JsonObject inSlots = new JsonObject();
-        config.getInputSlotCount().forEach((k, v) -> inSlots.addProperty(k.name(), v));
-        root.add("input_slot_count", inSlots);
-
-        JsonObject fuelSlots = new JsonObject();
-        config.getFuelSlotCount().forEach((k, v) -> fuelSlots.addProperty(k.name(), v));
-        root.add("fuel_slot_count", fuelSlots);
-
-        JsonObject outSlots = new JsonObject();
-        config.getOutputSlotCount().forEach((k, v) -> outSlots.addProperty(k.name(), v));
-        root.add("output_slot_count", outSlots);
+        putMap(root, "input_slot_count", config.getInputSlotCount());
+        putMap(root, "fuel_slot_count", config.getFuelSlotCount());
+        putMap(root, "output_slot_count", config.getOutputSlotCount());
 
         com.google.gson.JsonArray enabledTypes = new com.google.gson.JsonArray();
         for (FurnaceType type : config.getEnabledFurnaceTypes()) {
@@ -50,41 +42,85 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         }
         root.add("prevents_hopper_insert_non_smeltable", preventsHopper);
 
-        JsonObject border = new JsonObject();
-        config.getGuiBorderItemId().forEach((k, v) -> border.addProperty(k.name(), v));
-        root.add("gui_border_item_id", border);
+        putMap(root, "gui_border_item_id", config.getGuiBorderItemId());
+        putMap(root, "gui_fuel_left_item_id", config.getGuiFuelLeftItemId());
+        putMap(root, "gui_fuel_used_item_id", config.getGuiFuelUsedItemId());
+        putMap(root, "gui_progress_done_item_id", config.getGuiProgressDoneItemId());
+        putMap(root, "gui_progress_remaining_item_id", config.getGuiProgressRemainingItemId());
+        putMap(root, "gui_prev_recipe_item_id", config.getGuiPrevRecipeItemId());
+        putMap(root, "gui_next_recipe_item_id", config.getGuiNextRecipeItemId());
+        putMap(root, "gui_xp_indicator_item_id", config.getGuiXpIndicatorItemId());
+        putMap(root, "gui_next_functional_area_item_id", config.getGuiNextFunctionalAreaItemId());
+        putMap(root, "gui_prev_page_item_id", config.getGuiPrevPageItemId());
+        putMap(root, "gui_next_page_item_id", config.getGuiNextPageItemId());
 
-        JsonObject fuelLeft = new JsonObject();
-        config.getGuiFuelLeftItemId().forEach((k, v) -> fuelLeft.addProperty(k.name(), v));
-        root.add("gui_fuel_left_item_id", fuelLeft);
-
-        JsonObject fuelUsed = new JsonObject();
-        config.getGuiFuelUsedItemId().forEach((k, v) -> fuelUsed.addProperty(k.name(), v));
-        root.add("gui_fuel_used_item_id", fuelUsed);
-
-        JsonObject progDone = new JsonObject();
-        config.getGuiProgressDoneItemId().forEach((k, v) -> progDone.addProperty(k.name(), v));
-        root.add("gui_progress_done_item_id", progDone);
-
-        JsonObject progRem = new JsonObject();
-        config.getGuiProgressRemainingItemId().forEach((k, v) -> progRem.addProperty(k.name(), v));
-        root.add("gui_progress_remaining_item_id", progRem);
-
-        JsonObject nextFunc = new JsonObject();
-        config.getGuiNextFunctionalAreaItemId().forEach((k, v) -> nextFunc.addProperty(k.name(), v));
-        root.add("gui_next_functional_area_item_id", nextFunc);
-
-        JsonObject prevPage = new JsonObject();
-        config.getGuiPrevPageItemId().forEach((k, v) -> prevPage.addProperty(k.name(), v));
-        root.add("gui_prev_page_item_id", prevPage);
-
-        JsonObject nextPage = new JsonObject();
-        config.getGuiNextPageItemId().forEach((k, v) -> nextPage.addProperty(k.name(), v));
-        root.add("gui_next_page_item_id", nextPage);
+        putMap(root, "gui_title", config.getGuiTitle());
+        putMap(root, "gui_border_item_title", config.getGuiBorderItemTitle());
+        putMap(root, "gui_fuel_item_title", config.getGuiFuelItemTitle());
+        putMap(root, "gui_fuel_item_tooltip", config.getGuiFuelItemTooltip());
+        putMap(root, "gui_progress_item_title", config.getGuiProgressItemTitle());
+        putMap(root, "gui_progress_item_tooltip", config.getGuiProgressItemTooltip());
+        putMap(root, "gui_prev_recipe_item_title", config.getGuiPrevRecipeItemTitle());
+        putMap(root, "gui_prev_recipe_empty_item_tooltip", config.getGuiPrevRecipeEmptyItemTooltip());
+        putMap(root, "gui_prev_recipe_arbitrary_item_tooltip", config.getGuiPrevRecipeArbitraryItemTooltip());
+        putMap(root, "gui_prev_recipe_item_tooltip", config.getGuiPrevRecipeItemTooltip());
+        putMap(root, "gui_next_recipe_item_title", config.getGuiNextRecipeItemTitle());
+        putMap(root, "gui_next_recipe_empty_item_tooltip", config.getGuiNextRecipeEmptyItemTooltip());
+        putMap(root, "gui_next_recipe_arbitrary_item_tooltip", config.getGuiNextRecipeArbitraryItemTooltip());
+        putMap(root, "gui_next_recipe_item_tooltip", config.getGuiNextRecipeItemTooltip());
+        putMap(root, "gui_xp_indicator_item_title", config.getGuiXpIndicatorItemTitle());
+        putMap(root, "gui_xp_indicator_gainable_item_title", config.getGuiXpIndicatorGainableItemTitle());
+        putMap(root, "gui_xp_indicator_item_tooltip", config.getGuiXpIndicatorItemTooltip());
+        putMap(root, "gui_next_functional_area_item_title", config.getGuiNextFunctionalAreaItemTitle());
+        putMap(root, "gui_prev_page_item_title", config.getGuiPrevPageItemTitle());
+        putMap(root, "gui_prev_page_item_tooltip", config.getGuiPrevPageItemTooltip());
+        putMap(root, "gui_next_page_item_title", config.getGuiNextPageItemTitle());
+        putMap(root, "gui_next_page_item_tooltip", config.getGuiNextPageItemTooltip());
 
         com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
         try (java.io.FileWriter fw = new java.io.FileWriter(configFile)) {
             gson.toJson(root, fw);
+        }
+    }
+
+    private static JsonObject readExistingObject(File file) {
+        if (!file.isFile()) return new JsonObject();
+        try (FileReader reader = new FileReader(file)) {
+            JsonElement element = new JsonParser().parse(reader);
+            return element.isJsonObject() ? element.getAsJsonObject() : new JsonObject();
+        } catch (Exception ignored) {
+            return new JsonObject();
+        }
+    }
+
+    private static void putMap(JsonObject root, String key, Map<FurnaceType, ?> values) {
+        JsonObject object = new JsonObject();
+        for (Map.Entry<FurnaceType, ?> entry : values.entrySet()) {
+            Object value = entry.getValue();
+            if (value instanceof Number) object.addProperty(entry.getKey().name(), (Number) value);
+            else if (value instanceof Boolean) object.addProperty(entry.getKey().name(), (Boolean) value);
+            else object.addProperty(entry.getKey().name(), String.valueOf(value));
+        }
+        root.add(key, object);
+    }
+
+    private static void readStringMap(
+        JsonObject root, String key, EnumMap<FurnaceType, String> values
+    ) {
+        if (!root.has(key)) return;
+        JsonElement element = root.get(key);
+        if (element.isJsonPrimitive()) {
+            String value = element.getAsString();
+            for (FurnaceType type : FurnaceType.values()) values.put(type, value);
+            return;
+        }
+        if (!element.isJsonObject()) return;
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            if (!entry.getValue().isJsonPrimitive()) continue;
+            try {
+                values.put(FurnaceType.valueOf(entry.getKey()), entry.getValue().getAsString());
+            } catch (IllegalArgumentException ignored) {
+            }
         }
     }
 
@@ -102,6 +138,7 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         }
         if (JSON.isJsonObject()) {
             JsonObject obj = JSON.getAsJsonObject();
+            readStringMap(obj, "gui_title", config.getGuiTitle());
             if (obj.has("input_slot_count")) {
                 JsonElement ele = obj.get("input_slot_count");
                 if (ele.isJsonObject()) {
@@ -1002,6 +1039,8 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
     private @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
     guiNextPageItemId = new EnumMap<>(FurnaceType.class);
     private @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
+    guiTitle = new EnumMap<>(FurnaceType.class);
+    private @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
     guiBorderItemTitle = new EnumMap<>(FurnaceType.class);
     private @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
     guiFuelItemTitle = new EnumMap<>(FurnaceType.class);
@@ -1077,6 +1116,8 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
             .put(type, "minecraft:arrow");
             this.guiNextPageItemId
             .put(type, "minecraft:arrow");
+            this.guiTitle.put(type, type == FurnaceType.SMOKER ? "Smoker" :
+                (type == FurnaceType.BLAST_FURNACE ? "Blast Furnace" : "Furnace"));
             this.guiBorderItemTitle.put(type, "GUI Border");
             this.guiFuelItemTitle.put(type, "Fuel");
             this.guiFuelItemTooltip.put(type, "Available: %d / %d");
@@ -1331,6 +1372,20 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         @NotNull EnumMap<@NotNull FurnaceType, @NotNull String> map
     ) {
         this.guiNextPageItemId = map;
+    }
+
+    @Override
+    @Contract(pure = true)
+    public @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
+    getGuiTitle() {
+        return this.guiTitle;
+    }
+
+    @Override
+    public void setGuiTitle(
+        @NotNull EnumMap<@NotNull FurnaceType, @NotNull String> map
+    ) {
+        this.guiTitle = map;
     }
 
     @Override

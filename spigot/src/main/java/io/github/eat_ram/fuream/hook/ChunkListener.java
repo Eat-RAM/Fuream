@@ -38,6 +38,7 @@ public class ChunkListener implements Listener {
             FurnacePos pos = entry.getKey();
             if (pos.worldName.equals(worldName) && (pos.x >> 4) == cx && (pos.z >> 4) == cz) {
                 FurnaceContext ctx = entry.getValue();
+                FurnaceManager.closeSessions(ctx);
                 if (ctx.dirty || ctx.data.hasAny()) {
                     FurnaceManager.saveToNbt(ctx);
                 }

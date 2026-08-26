@@ -3,6 +3,7 @@ package io.github.eat_ram.fuream.screen;
 import java.util.ArrayList;
 import java.util.List;
 import java.util.function.BiFunction;
+import java.util.UUID;
 
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
@@ -10,11 +11,13 @@ import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.hook.FurnaceManager;
 import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
 import io.github.eat_ram.fuream.logic.FureamFurnaceLogic;
+import io.github.eat_ram.fuream.compat.ItemCompat;
 import io.github.eat_ram.fuream.util.FurnacePos;
 import org.bukkit.Bukkit;
 import org.bukkit.Location;
 import org.bukkit.Material;
 import org.bukkit.inventory.Inventory;
+import org.bukkit.inventory.InventoryHolder;
 import org.bukkit.inventory.ItemStack;
 import org.bukkit.inventory.meta.ItemMeta;
 import org.jetbrains.annotations.Contract;
@@ -35,7 +38,7 @@ import org.jetbrains.annotations.Range;
  * 45..53  functional area & decor (row 6)
  * </pre>
  */
-public class FureamScreenInventory {
+public class FureamScreenInventory implements InventoryHolder {
     public static final int COLS = 9;
     public static final int SIZE = 54;
     public static final ArrayList<@NotNull BiFunction<
@@ -61,6 +64,8 @@ public class FureamScreenInventory {
     public final @Range(from = 1, to = Integer.MAX_VALUE) int outputSlots;
     public final @NotNull Location location;
     public final @NotNull FureamFurnaceData data;
+    public final @NotNull UUID viewerId;
+    public final @NotNull FureamScreenHandler handler;
 
     public int burnTime;
     public int fuelTimeTotal;
@@ -76,10 +81,11 @@ public class FureamScreenInventory {
     public final @NotNull Inventory bukkitInventory;
 
     public FureamScreenInventory(
-        @NotNull Location location, @NotNull FurnaceType type,
+        @NotNull UUID viewerId, @NotNull Location location, @NotNull FurnaceType type,
         @NotNull FureamFurnaceData data, @Nullable FureamWorldConfig config
     ) {
         this.location = location;
+        this.viewerId = viewerId;
         this.furnaceType = type;
         this.data = data;
         this.config = config;
@@ -93,22 +99,23 @@ public class FureamScreenInventory {
         this.fuelSlots = Math.max(1, fuelSlotCount);
         this.outputSlots = Math.max(1, outputSlotCount);
 
-        this.fuelLeftItem = parseMaterial(config != null ? config.getGuiFuelLeftItemId().get(type) : null, Material.ORANGE_STAINED_GLASS_PANE);
-        this.fuelUsedItem = parseMaterial(config != null ? config.getGuiFuelUsedItemId().get(type) : null, Material.BLACK_STAINED_GLASS_PANE);
-        this.progressDoneItem = parseMaterial(config != null ? config.getGuiProgressDoneItemId().get(type) : null, Material.WHITE_STAINED_GLASS_PANE);
-        this.progressRemainingItem = parseMaterial(config != null ? config.getGuiProgressRemainingItemId().get(type) : null, Material.BLACK_STAINED_GLASS_PANE);
-        this.nextFunctionalItem = parseMaterial(config != null ? config.getGuiNextFunctionalAreaItemId().get(type) : null, Material.COMMAND_BLOCK);
+        this.fuelLeftItem = parseMaterial(config != null ? config.getGuiFuelLeftItemId().get(type) : null, Material.GLASS_PANE);
+        this.fuelUsedItem = parseMaterial(config != null ? config.getGuiFuelUsedItemId().get(type) : null, Material.GLASS_PANE);
+        this.progressDoneItem = parseMaterial(config != null ? config.getGuiProgressDoneItemId().get(type) : null, Material.GLASS_PANE);
+        this.progressRemainingItem = parseMaterial(config != null ? config.getGuiProgressRemainingItemId().get(type) : null, Material.GLASS_PANE);
+        this.nextFunctionalItem = parseMaterial(config != null ? config.getGuiNextFunctionalAreaItemId().get(type) : null, Material.BOOK);
         this.prevPageItem = parseMaterial(config != null ? config.getGuiPrevPageItemId().get(type) : null, Material.ARROW);
         this.nextPageItem = parseMaterial(config != null ? config.getGuiNextPageItemId().get(type) : null, Material.ARROW);
 
-        Material borderMat = parseMaterial(config != null ? config.getGuiBorderItemId().get(type) : null, Material.BLACK_STAINED_GLASS_PANE);
+        Material borderMat = parseMaterial(config != null ? config.getGuiBorderItemId().get(type) : null, Material.GLASS_PANE);
         this.border = makeTooltipItem(
             new ItemStack(borderMat, 1),
             config != null ? config.getGuiBorderItemTitle().get(type) : "GUI Border"
         );
 
-        String title = type == FurnaceType.SMOKER ? "Smoker" : (type == FurnaceType.BLAST_FURNACE ? "Blast Furnace" : "Furnace");
-        this.bukkitInventory = Bukkit.createInventory(null, 54, title);
+        String title = resolveTitle(location, type, config);
+        this.bukkitInventory = Bukkit.createInventory(this, 54, title.length() > 32 ? title.substring(0, 32) : title);
+        this.handler = new FureamScreenHandler(this);
 
         FurnacePos pos = new FurnacePos(this.location);
         FurnaceContext ctx = FurnaceManager.CONTEXTS.get(pos);
@@ -139,10 +146,29 @@ public class FureamScreenInventory {
     }
 
     private static Material parseMaterial(@Nullable String id, Material fallback) {
-        if (id == null) return fallback;
-        String name = id.startsWith("minecraft:") ? id.substring(10) : id;
-        Material mat = Material.matchMaterial(name.toUpperCase());
-        return mat != null ? mat : fallback;
+        return ItemCompat.matchMaterial(id, fallback);
+    }
+
+    private static String resolveTitle(
+        Location location, FurnaceType type, @Nullable FureamWorldConfig config
+    ) {
+        try {
+            Object state = location.getBlock().getState();
+            Object custom = state.getClass().getMethod("getCustomName").invoke(state);
+            if (custom instanceof String && !((String) custom).isEmpty()) return (String) custom;
+        } catch (ReflectiveOperationException ignored) {
+        }
+        if (config != null) {
+            String configured = config.getGuiTitle().get(type);
+            if (configured != null && !configured.isEmpty()) return configured;
+        }
+        return type == FurnaceType.SMOKER ? "Smoker" :
+            (type == FurnaceType.BLAST_FURNACE ? "Blast Furnace" : "Furnace");
+    }
+
+    @Override
+    public Inventory getInventory() {
+        return this.bukkitInventory;
     }
 
     public int computeCookTimeTotal() {
@@ -367,9 +393,17 @@ public class FureamScreenInventory {
     }
 
     public boolean isValid(int slot, @NotNull ItemStack stack) {
-        if (!stack.getType().isAir()) {
+        if (!ItemCompat.isEmpty(stack)) {
             if (this.isInputSlot(slot)) return true;
-            if (this.isFuelRowSlot(slot)) return FureamFurnaceLogic.isFuel(stack);
+            if (this.isFuelRowSlot(slot)) {
+                Material bucket = Material.matchMaterial("BUCKET");
+                return FureamFurnaceLogic.isFuel(stack) || bucket != null && stack.getType() == bucket;
+            }
+            if (this.isFunctionalAreaSlot(slot)) {
+                int area = this.getCurrentFunctionalArea();
+                return area < this.functionalAreas.size() &&
+                    this.functionalAreas.get(area).isStorable(this, slot - 45);
+            }
         }
         return false;
     }

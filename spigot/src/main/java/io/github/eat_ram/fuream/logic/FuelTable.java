@@ -9,6 +9,7 @@ import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.Nullable;
+import io.github.eat_ram.fuream.compat.ItemCompat;
 
 public abstract class FuelTable {
     private static final Map<Material, Integer> FUEL_TIMES = new EnumMap<>(Material.class);
@@ -187,12 +188,25 @@ public abstract class FuelTable {
             "BOW", "CROSSBOW", "FISHING_ROD"
         }, 300);
 
+        // Pre-flattening aliases used by 1.7-1.12.
+        safePutAll(new String[]{
+            "LOG", "LOG_2", "WOOD", "WOOD_STAIRS", "SPRUCE_WOOD_STAIRS",
+            "BIRCH_WOOD_STAIRS", "JUNGLE_WOOD_STAIRS", "ACACIA_STAIRS",
+            "DARK_OAK_STAIRS", "FENCE", "FENCE_GATE", "SPRUCE_FENCE",
+            "BIRCH_FENCE", "JUNGLE_FENCE", "DARK_OAK_FENCE", "ACACIA_FENCE",
+            "SPRUCE_FENCE_GATE", "BIRCH_FENCE_GATE", "JUNGLE_FENCE_GATE",
+            "DARK_OAK_FENCE_GATE", "ACACIA_FENCE_GATE", "WOOD_DOOR",
+            "TRAP_DOOR", "WOOD_PLATE", "WOOD_BUTTON", "SIGN", "WORKBENCH",
+            "WOOD_AXE", "WOOD_HOE", "WOOD_PICKAXE", "WOOD_SPADE", "WOOD_SWORD"
+        }, 300);
+
         // Slabs (150 ticks)
         safePutAll(new String[]{
             "OAK_SLAB", "SPRUCE_SLAB", "BIRCH_SLAB", "JUNGLE_SLAB",
             "ACACIA_SLAB", "DARK_OAK_SLAB", "MANGROVE_SLAB", "CHERRY_SLAB",
             "BAMBOO_SLAB", "BAMBOO_MOSAIC_SLAB"
         }, 150);
+        safePut("WOOD_STEP", 150);
 
         // 200 ticks
         safePutAll(new String[]{"BOWL", "LADDER"}, 200);
@@ -203,6 +217,7 @@ public abstract class FuelTable {
             "JUNGLE_SAPLING", "ACACIA_SAPLING", "DARK_OAK_SAPLING", "MANGROVE_PROPAGULE",
             "CHERRY_SAPLING", "BAMBOO", "AZALEA", "FLOWERING_AZALEA"
         }, 100);
+        safePut("SAPLING", 100);
 
         // 67 ticks (wool, carpet)
         safePutAll(new String[]{
@@ -215,28 +230,29 @@ public abstract class FuelTable {
             "LIGHT_GRAY_CARPET", "CYAN_CARPET", "PURPLE_CARPET", "BLUE_CARPET",
             "BROWN_CARPET", "GREEN_CARPET", "RED_CARPET", "BLACK_CARPET"
         }, 67);
+        safePutAll(new String[]{"WOOL", "CARPET"}, 67);
 
         // Scaffolding (50 ticks)
         safePut("SCAFFOLDING", 50);
     }
 
     public static boolean isFuel(@Nullable ItemStack stack) {
-        if (stack == null || stack.getType().isAir()) return false;
+        if (ItemCompat.isEmpty(stack)) return false;
         return isFuel(stack.getType());
     }
 
     public static boolean isFuel(@Nullable Material material) {
-        if (material == null || material.isAir()) return false;
+        if (ItemCompat.isAir(material)) return false;
         return FUEL_TIMES.containsKey(material);
     }
 
     public static int getFuelTime(@Nullable ItemStack stack) {
-        if (stack == null || stack.getType().isAir()) return 0;
+        if (ItemCompat.isEmpty(stack)) return 0;
         return getFuelTime(stack.getType());
     }
 
     public static int getFuelTime(@Nullable Material material) {
-        if (material == null || material.isAir()) return 0;
+        if (ItemCompat.isAir(material)) return 0;
         return FUEL_TIMES.getOrDefault(material, 0);
     }
 

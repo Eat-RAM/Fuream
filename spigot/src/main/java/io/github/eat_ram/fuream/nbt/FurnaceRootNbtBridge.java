@@ -10,10 +10,6 @@ import java.util.concurrent.ConcurrentHashMap;
 import java.util.concurrent.ConcurrentMap;
 import java.util.function.BiConsumer;
 
-import de.tr7zw.nbtapi.NBT;
-import de.tr7zw.nbtapi.NBTType;
-import de.tr7zw.nbtapi.iface.ReadWriteNBT;
-import de.tr7zw.nbtapi.iface.ReadableNBT;
 import io.github.eat_ram.fuream.FureamMain;
 import io.github.eat_ram.fuream.data.FureamData;
 import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
@@ -28,7 +24,6 @@ public final class FurnaceRootNbtBridge {
     private static final String STATE_MAP_KEY = "io.github.eat_ram.fuream.root_nbt_state";
 
     private static final ConcurrentMap<Class<?>, Field> TAG_MAP_FIELDS = new ConcurrentHashMap<>();
-    private static final ConcurrentMap<Class<?>, Method> PUT_SHORT_METHODS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<Class<?>, Method> TILE_ENTITY_METHODS = new ConcurrentHashMap<>();
     private static final ThreadLocal<Boolean> INJECTION_SUPPRESSED = new ThreadLocal<>();
 
@@ -52,14 +47,14 @@ public final class FurnaceRootNbtBridge {
             return false;
         }
 
-        ReadableNBT dataNbt = NBT.wrapNMSTag(stored[0]);
+        NativeNbtCompound dataNbt = new NativeNbtCompound(stored[0]);
         ctx.data.readNbt(ctx, dataNbt);
         for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
             entry.getValue().readNbt(ctx, dataNbt);
         }
 
         if (stored[1] != null && !(stored[1] instanceof Integer)) {
-            ReadableNBT rootNbt = NBT.wrapNMSTag(stored[1]);
+            NativeNbtCompound rootNbt = new NativeNbtCompound(stored[1]);
             ctx.burnTime = readNumericTag(rootNbt, "BurnTime", ctx.burnTime);
             ctx.cookTime = readNumericTag(rootNbt, "CookTime", ctx.cookTime);
             ctx.cookTimeTotal = readNumericTag(rootNbt, "CookTimeTotal", ctx.cookTimeTotal);
@@ -83,22 +78,27 @@ public final class FurnaceRootNbtBridge {
             throw new IllegalStateException("Unable to access the live furnace block entity");
         }
 
-        Object[] previous = stateMap().get(tileEntity);
-        Object previousData = previous != null && previous.length > 0 ? previous[0] : null;
-        ReadWriteNBT dataNbt = NBT.createNBTObject();
-        if (previousData != null) {
-            dataNbt.mergeCompound(NBT.wrapNMSTag(previousData));
-        }
+        NativeNbtCompound dataNbt = NativeNbtCompound.createForServer();
 
         ctx.data.writeNbt(ctx, dataNbt);
         for (FureamData extra : ctx.extraData.values()) {
             extra.writeNbt(ctx, dataNbt);
         }
 
-        Object rawData = rawCompound(dataNbt);
         stateMap().put(tileEntity, new Object[] {
-            rawData, ctx.burnTime, ctx.cookTime, ctx.cookTimeTotal
+            dataNbt.keys().isEmpty() ? null : dataNbt.raw(),
+            ctx.burnTime, ctx.cookTime, ctx.cookTimeTotal
         });
+    }
+
+    public static @Nullable NativeNbtCompound capturedRoot(@NotNull BlockState state) {
+        Object tileEntity = getTileEntity(state);
+        if (tileEntity == null) return null;
+        Object[] stored = stateMap().get(tileEntity);
+        if (stored == null || stored.length < 2 || stored[1] == null || stored[1] instanceof Integer) {
+            return null;
+        }
+        return new NativeNbtCompound(stored[1]);
     }
 
     public static void withoutInjection(@NotNull Runnable action) {
@@ -113,9 +113,7 @@ public final class FurnaceRootNbtBridge {
     private static void captureLoadedNbt(Object tileEntity, Object rootNbt) {
         try {
             Object fureamData = tagMap(rootNbt).get(FureamMain.DATA_KEY);
-            if (fureamData != null) {
-                stateMap().put(tileEntity, new Object[] {fureamData, rootNbt});
-            }
+            stateMap().put(tileEntity, new Object[] {fureamData, rootNbt});
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Unable to capture furnace root NBT", e);
         }
@@ -131,15 +129,15 @@ public final class FurnaceRootNbtBridge {
                 return;
             }
 
-            if (stored[0] != null) {
-                tagMap(rootNbt).put(FureamMain.DATA_KEY, stored[0]);
-            }
+            if (stored[0] != null) tagMap(rootNbt).put(FureamMain.DATA_KEY, stored[0]);
+            else tagMap(rootNbt).remove(FureamMain.DATA_KEY);
             if (stored.length < 4 || !(stored[1] instanceof Integer)) {
                 return;
             }
-            putShort(rootNbt, "BurnTime", (short) (int) (Integer) stored[1]);
-            putShort(rootNbt, "CookTime", (short) (int) (Integer) stored[2]);
-            putShort(rootNbt, "CookTimeTotal", (short) (int) (Integer) stored[3]);
+            NativeNbtCompound root = new NativeNbtCompound(rootNbt);
+            root.setShort("BurnTime", (short) (int) (Integer) stored[1]);
+            root.setShort("CookTime", (short) (int) (Integer) stored[2]);
+            root.setShort("CookTimeTotal", (short) (int) (Integer) stored[3]);
         } catch (ReflectiveOperationException e) {
             throw new IllegalStateException("Unable to inject furnace root NBT", e);
         }
@@ -185,34 +183,11 @@ public final class FurnaceRootNbtBridge {
         throw new IllegalStateException("Unable to locate NBT compound tag map on " + compoundClass.getName());
     }
 
-    private static void putShort(Object compound, String key, short value)
-        throws ReflectiveOperationException {
-        Method method = PUT_SHORT_METHODS.get(compound.getClass());
-        if (method == null) {
-            method = findPutShortMethod(compound.getClass());
-            PUT_SHORT_METHODS.put(compound.getClass(), method);
-        }
-        method.invoke(compound, key, value);
-    }
-
-    private static Method findPutShortMethod(Class<?> compoundClass) {
-        for (Method method : compoundClass.getMethods()) {
-            Class<?>[] parameters = method.getParameterTypes();
-            if (parameters.length == 2 && parameters[0] == String.class &&
-                parameters[1] == short.class && method.getReturnType() == void.class) {
-                method.setAccessible(true);
-                return method;
-            }
-        }
-        throw new IllegalStateException("Unable to locate NBT putShort on " + compoundClass.getName());
-    }
-
     private static @Nullable Object getTileEntity(@NotNull BlockState state) {
         try {
             Method method = TILE_ENTITY_METHODS.get(state.getClass());
             if (method == null) {
-                method = state.getClass().getMethod("getTileEntity");
-                method.setAccessible(true);
+                method = findTileEntityMethod(state.getClass());
                 TILE_ENTITY_METHODS.put(state.getClass(), method);
             }
             return method.invoke(state);
@@ -221,27 +196,25 @@ public final class FurnaceRootNbtBridge {
         }
     }
 
-    private static Object rawCompound(ReadWriteNBT nbt) {
-        try {
-            Method method = nbt.getClass().getMethod("getCompound");
-            method.setAccessible(true);
-            return method.invoke(nbt);
-        } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("Unable to unwrap NBT compound", e);
+    private static @NotNull Method findTileEntityMethod(@NotNull Class<?> stateClass)
+        throws NoSuchMethodException {
+        for (String preferred : new String[] {"getTileEntityFromWorld", "getTileEntity"}) {
+            for (Class<?> current = stateClass; current != null; current = current.getSuperclass()) {
+                for (Method method : current.getDeclaredMethods()) {
+                    if (preferred.equals(method.getName()) && method.getParameterTypes().length == 0) {
+                        method.setAccessible(true);
+                        return method;
+                    }
+                }
+            }
         }
+        throw new NoSuchMethodException("No live tile entity accessor on " + stateClass.getName());
     }
 
     private static int readNumericTag(
-        @Nullable ReadableNBT nbt, @NotNull String key, int fallback
+        @Nullable NativeNbtCompound nbt, @NotNull String key, int fallback
     ) {
-        if (nbt == null || !nbt.hasTag(key)) {
-            return fallback;
-        }
-        NBTType type = nbt.getType(key);
-        if (type == NBTType.NBTTagShort) return nbt.getShort(key);
-        if (type == NBTType.NBTTagByte) return nbt.getByte(key);
-        if (type == NBTType.NBTTagLong) return (int) (long) nbt.getLong(key);
-        return nbt.getInteger(key);
+        return nbt == null ? fallback : nbt.getInt(key, fallback);
     }
 
     private FurnaceRootNbtBridge() {

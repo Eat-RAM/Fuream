@@ -18,6 +18,76 @@ import org.jetbrains.annotations.Contract;
 import org.jetbrains.annotations.NotNull;
 
 public class FureamWorldConfigImpl implements FureamWorldConfig {
+    public static void writeWorldConfig(
+        @NotNull FureamWorldConfig config, @NotNull File configFile
+    ) throws java.io.IOException {
+        if (configFile.getParentFile() != null) {
+            configFile.getParentFile().mkdirs();
+        }
+        JsonObject root = new JsonObject();
+
+        JsonObject inSlots = new JsonObject();
+        config.getInputSlotCount().forEach((k, v) -> inSlots.addProperty(k.name(), v));
+        root.add("input_slot_count", inSlots);
+
+        JsonObject fuelSlots = new JsonObject();
+        config.getFuelSlotCount().forEach((k, v) -> fuelSlots.addProperty(k.name(), v));
+        root.add("fuel_slot_count", fuelSlots);
+
+        JsonObject outSlots = new JsonObject();
+        config.getOutputSlotCount().forEach((k, v) -> outSlots.addProperty(k.name(), v));
+        root.add("output_slot_count", outSlots);
+
+        com.google.gson.JsonArray enabledTypes = new com.google.gson.JsonArray();
+        for (FurnaceType type : config.getEnabledFurnaceTypes()) {
+            enabledTypes.add(type.name());
+        }
+        root.add("enabled_furnace_types", enabledTypes);
+
+        com.google.gson.JsonArray preventsHopper = new com.google.gson.JsonArray();
+        for (FurnaceType type : config.getPreventsHopperInsertNonSmeltable()) {
+            preventsHopper.add(type.name());
+        }
+        root.add("prevents_hopper_insert_non_smeltable", preventsHopper);
+
+        JsonObject border = new JsonObject();
+        config.getGuiBorderItemId().forEach((k, v) -> border.addProperty(k.name(), v));
+        root.add("gui_border_item_id", border);
+
+        JsonObject fuelLeft = new JsonObject();
+        config.getGuiFuelLeftItemId().forEach((k, v) -> fuelLeft.addProperty(k.name(), v));
+        root.add("gui_fuel_left_item_id", fuelLeft);
+
+        JsonObject fuelUsed = new JsonObject();
+        config.getGuiFuelUsedItemId().forEach((k, v) -> fuelUsed.addProperty(k.name(), v));
+        root.add("gui_fuel_used_item_id", fuelUsed);
+
+        JsonObject progDone = new JsonObject();
+        config.getGuiProgressDoneItemId().forEach((k, v) -> progDone.addProperty(k.name(), v));
+        root.add("gui_progress_done_item_id", progDone);
+
+        JsonObject progRem = new JsonObject();
+        config.getGuiProgressRemainingItemId().forEach((k, v) -> progRem.addProperty(k.name(), v));
+        root.add("gui_progress_remaining_item_id", progRem);
+
+        JsonObject nextFunc = new JsonObject();
+        config.getGuiNextFunctionalAreaItemId().forEach((k, v) -> nextFunc.addProperty(k.name(), v));
+        root.add("gui_next_functional_area_item_id", nextFunc);
+
+        JsonObject prevPage = new JsonObject();
+        config.getGuiPrevPageItemId().forEach((k, v) -> prevPage.addProperty(k.name(), v));
+        root.add("gui_prev_page_item_id", prevPage);
+
+        JsonObject nextPage = new JsonObject();
+        config.getGuiNextPageItemId().forEach((k, v) -> nextPage.addProperty(k.name(), v));
+        root.add("gui_next_page_item_id", nextPage);
+
+        com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
+        try (java.io.FileWriter fw = new java.io.FileWriter(configFile)) {
+            gson.toJson(root, fw);
+        }
+    }
+
     @SuppressWarnings("deprecation")
     public static void readWorldConfig(
         @NotNull FureamWorldConfig config, @NotNull File configFile

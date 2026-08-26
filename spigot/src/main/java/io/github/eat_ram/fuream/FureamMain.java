@@ -103,10 +103,30 @@ public class FureamMain extends JavaPlugin implements Listener, CommandExecutor 
 
     public static void loadWorldConfig(@NotNull World world) {
         FureamWorldConfigImpl config = new FureamWorldConfigImpl();
-        File configFile = new File(world.getWorldFolder(), "fuream.json");
+        File worldFolder = world.getWorldFolder();
+        File configFile = new File(worldFolder, "fuream.json");
+        File serverconfigFile = new File(new File(worldFolder, "serverconfig"), "fuream.json");
+        File serverconfigJson5 = new File(new File(worldFolder, "serverconfig"), "fuream.json5");
+
+        File targetFile = null;
         if (configFile.exists()) {
+            targetFile = configFile;
+        } else if (serverconfigFile.exists()) {
+            targetFile = serverconfigFile;
+        } else if (serverconfigJson5.exists()) {
+            targetFile = serverconfigJson5;
+        } else {
+            targetFile = configFile;
             try {
-                FureamWorldConfigImpl.readWorldConfig(config, configFile);
+                FureamWorldConfigImpl.writeWorldConfig(config, targetFile);
+            } catch (Exception e) {
+                Bukkit.getLogger().warning("Failed to create default fuream.json for world " + world.getName() + ": " + e.getMessage());
+            }
+        }
+
+        if (targetFile != null && targetFile.exists()) {
+            try {
+                FureamWorldConfigImpl.readWorldConfig(config, targetFile);
             } catch (Exception e) {
                 Bukkit.getLogger().warning("Failed to load fuream.json for world " + world.getName() + ": " + e.getMessage());
             }

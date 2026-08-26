@@ -1,6 +1,5 @@
 package io.github.eat_ram.fuream.hook;
 
-import java.lang.reflect.Field;
 import java.util.HashMap;
 import java.util.Iterator;
 import java.util.Map;
@@ -77,48 +76,6 @@ public class FurnaceManager {
                 return clazz.cast(extra);
             }
             return null;
-        }
-
-        public double getRateUpgradeFactor() {
-            FureamData extra = this.extraData.get("fuream-extras-furnace-upgrades");
-            if (extra != null) {
-                try {
-                    Field f = extra.getClass().getField("RATE_UPGRADE_FACTORS");
-                    Map<?, ?> map = (Map<?, ?>) f.get(null);
-                    Field rateStackField = extra.getClass().getField("rateUpgradeStack");
-                    ItemStack stack = (ItemStack) rateStackField.get(extra);
-                    if (stack != null && !stack.getType().isAir() && stack.getAmount() > 0) {
-                        Class<?> ciClass = Class.forName("io.github.eat_ram.fuream.extras.fu.CountedItem");
-                        Object countedItem = ciClass.getConstructor(ItemStack.class).newInstance(stack);
-                        Object val = map.get(countedItem);
-                        if (val instanceof Number) {
-                            return ((Number) val).doubleValue();
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-            return 1.0;
-        }
-
-        public double getFuelUpgradeFactor() {
-            FureamData extra = this.extraData.get("fuream-extras-furnace-upgrades");
-            if (extra != null) {
-                try {
-                    Field f = extra.getClass().getField("FUEL_UPGRADE_FACTORS");
-                    Map<?, ?> map = (Map<?, ?>) f.get(null);
-                    Field fuelStackField = extra.getClass().getField("fuelUpgradeStack");
-                    ItemStack stack = (ItemStack) fuelStackField.get(extra);
-                    if (stack != null && !stack.getType().isAir() && stack.getAmount() > 0) {
-                        Class<?> ciClass = Class.forName("io.github.eat_ram.fuream.extras.fu.CountedItem");
-                        Object countedItem = ciClass.getConstructor(ItemStack.class).newInstance(stack);
-                        Object val = map.get(countedItem);
-                        if (val instanceof Number) {
-                            return ((Number) val).doubleValue();
-                        }
-                    }
-                } catch (Exception ignored) {}
-            }
-            return 1.0;
         }
     }
 

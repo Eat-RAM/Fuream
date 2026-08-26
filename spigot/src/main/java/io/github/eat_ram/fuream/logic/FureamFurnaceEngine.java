@@ -36,10 +36,11 @@ public abstract class FureamFurnaceEngine {
         while (data.fuels.size() < fuelCount) data.fuels.add(new ItemStack(Material.AIR));
         while (data.outputs.size() < outCount) data.outputs.add(new ItemStack(Material.AIR));
 
-        // Always compute cookTimeTotal according to current rate factor
+        // Ensure default cookTimeTotal
         int baseCookTime = ctx.type == FurnaceType.FURNACE ? 200 : 100;
-        double rateUpgradeFactor = ctx.getRateUpgradeFactor();
-        ctx.cookTimeTotal = Math.max(1, (int) Math.ceil(baseCookTime / rateUpgradeFactor));
+        if (ctx.cookTimeTotal <= 0) {
+            ctx.cookTimeTotal = baseCookTime;
+        }
 
         // Ingest and feed through vanilla furnace inventory (for seamless hopper integration)
         Block block = world.getBlockAt(ctx.pos.x, ctx.pos.y, ctx.pos.z);
@@ -127,9 +128,7 @@ public abstract class FureamFurnaceEngine {
             }
 
             if (fuelStack != null) {
-                int baseFuelTime = FuelTable.getFuelTime(fuelStack);
-                double fuelUpgradeFactor = ctx.getFuelUpgradeFactor();
-                int fuelTime = (int) Math.round(baseFuelTime * fuelUpgradeFactor);
+                int fuelTime = FuelTable.getFuelTime(fuelStack);
 
                 ctx.burnTime = fuelTime;
                 ctx.fuelTimeTotal = fuelTime;
@@ -187,46 +186,6 @@ public abstract class FureamFurnaceEngine {
                 inputStack.setAmount(inputStack.getAmount() - 1);
                 if (inputStack.getAmount() <= 0) {
                     data.inputs.set(firstInputIdx, new ItemStack(Material.AIR));
-                }
-
-                // Deduct fuel time compensation so that speed upgrade does not artificially multiply fuel capacity
-                int extraBurnTimeCost = baseCookTime - ctx.cookTimeTotal;
-                if (extraBurnTimeCost > 0) {
-                    ctx.burnTime -= extraBurnTimeCost;
-                    while (ctx.burnTime <= 0) {
-                        int nextFuelIdx = -1;
-                        ItemStack nextFuelStack = null;
-                        for (int i = 0; i < data.fuels.size(); i++) {
-                            ItemStack s = data.fuels.get(i);
-                            if (!s.getType().isAir() && s.getAmount() > 0 && FuelTable.isFuel(s)) {
-                                nextFuelIdx = i;
-                                nextFuelStack = s;
-                                break;
-                            }
-                        }
-                        if (nextFuelStack == null) {
-                            break;
-                        }
-                        int nextBaseFuelTime = FuelTable.getFuelTime(nextFuelStack);
-                        double nextFuelFactor = ctx.getFuelUpgradeFactor();
-                        int nextFuelTime = (int) Math.round(nextBaseFuelTime * nextFuelFactor);
-                        if (nextFuelTime <= 0) {
-                            break;
-                        }
-                        ctx.burnTime += nextFuelTime;
-                        ctx.fuelTimeTotal = nextFuelTime;
-                        if (nextFuelStack.getType() == Material.LAVA_BUCKET) {
-                            data.fuels.set(nextFuelIdx, new ItemStack(Material.BUCKET));
-                        } else {
-                            nextFuelStack.setAmount(nextFuelStack.getAmount() - 1);
-                            if (nextFuelStack.getAmount() <= 0) {
-                                data.fuels.set(nextFuelIdx, new ItemStack(Material.AIR));
-                            }
-                        }
-                    }
-                    if (ctx.burnTime < 0) {
-                        ctx.burnTime = 0;
-                    }
                 }
             }
         } else if (ctx.cookTime > 0) {

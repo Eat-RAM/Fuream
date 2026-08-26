@@ -136,14 +136,12 @@ public class FureamScreenInventory {
     }
 
     public int computeCookTimeTotal() {
-        int base = this.furnaceType == FurnaceType.FURNACE ? 200 : 100;
         FurnacePos pos = new FurnacePos(this.location);
         FurnaceContext ctx = FurnaceManager.CONTEXTS.get(pos);
         if (ctx != null) {
-            double factor = ctx.getRateUpgradeFactor();
-            return Math.max(1, (int) Math.ceil(base / factor));
+            return Math.max(1, ctx.cookTimeTotal);
         }
-        return base;
+        return this.furnaceType == FurnaceType.FURNACE ? 200 : 100;
     }
 
     public boolean isInputSlot(int slot) {

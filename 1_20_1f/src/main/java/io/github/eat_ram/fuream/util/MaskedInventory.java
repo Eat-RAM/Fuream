@@ -29,15 +29,28 @@ public class MaskedInventory extends DefaultedList<@NotNull ItemStack> {
 
     public static class InventoryViewProfile {
         public final @NotNull List<@NotNull ItemStack> inventory;
-        public final @NotNull Predicate<? super ItemStack> filter;
+        public final @NotNull Iterable<
+            ? extends @NotNull Predicate<? super ItemStack>
+        > filters;
         public final boolean accumulating;
+
+        public InventoryViewProfile(
+            @NotNull List<@NotNull ItemStack> inventory,
+            @NotNull Iterable<
+                ? extends @NotNull Predicate<? super ItemStack>
+            > filters, boolean accumulating
+        ) {
+            this.inventory = inventory;
+            this.filters = filters;
+            this.accumulating = accumulating;
+        }
 
         public InventoryViewProfile(
             @NotNull List<@NotNull ItemStack> inventory,
             @NotNull Predicate<? super ItemStack> filter, boolean accumulating
         ) {
             this.inventory = inventory;
-            this.filter = filter;
+            this.filters = Collections.singleton(filter);
             this.accumulating = accumulating;
         }
 
@@ -158,9 +171,12 @@ public class MaskedInventory extends DefaultedList<@NotNull ItemStack> {
 
         @Override
         public @NotNull ItemStack get(int index) {
-            for (ItemStack stack : this.inventories[index].inventory) {
-                if (this.inventories[index].filter.test(stack)) {
-                    return stack;
+            for (Predicate<? super ItemStack> filter :
+                 this.inventories[index].filters) {
+                for (ItemStack stack : this.inventories[index].inventory) {
+                    if (filter.test(stack)) {
+                        return stack;
+                    }
                 }
             }
             return ItemStack.EMPTY;
@@ -181,11 +197,14 @@ public class MaskedInventory extends DefaultedList<@NotNull ItemStack> {
                        ItemStack.EMPTY;
             }
             int i = 0;
-            for (ItemStack stack : profile.inventory) {
-                if (profile.filter.test(stack)) {
-                    return profile.inventory.set(i, element);
+            for (Predicate<? super ItemStack> filter : profile.filters) {
+                i = 0;
+                for (ItemStack stack : profile.inventory) {
+                    if (filter.test(stack)) {
+                        return profile.inventory.set(i, element);
+                    }
+                    ++i;
                 }
-                ++i;
             }
             return i > 0 ? profile.inventory.set(0, element) : ItemStack.EMPTY;
         }

@@ -146,6 +146,7 @@ public abstract class FureamFurnaceLogic {
                 dropIfPresent(world, x, y, z, i);
             }
             data.outputs.clear();
+            dropIfPresent(world, x, y, z, data.recipeOverridingInput);
             int amount = (int)Math.floor(data.experience);
             if (amount > 0) {
                 data.experience -= amount;

@@ -1,5 +1,6 @@
 package io.github.eat_ram.fuream.mixin;
 
+import java.util.Arrays;
 import java.util.HashMap;
 import java.util.List;
 import java.util.Optional;
@@ -110,7 +111,10 @@ extends LockableContainerBlockEntity implements FureamDataHolder {
                 new MaskedInventory.InventoryViewProfile(
                     data.inputs, false
                 ), new MaskedInventory.InventoryViewProfile(
-                    data.fuels, stack -> this.getFuelTime(stack) > 0, false
+                    data.fuels, Arrays.asList(
+                        stack -> this.getFuelTime(stack) > 0,
+                        stack -> !stack.isEmpty()
+                    ), false
                 ), new MaskedInventory.InventoryViewProfile(
                     data.outputs, true
                 )
@@ -560,7 +564,10 @@ extends LockableContainerBlockEntity implements FureamDataHolder {
                 new MaskedInventory.InventoryViewProfile(
                     data.inputs, false
                 ), new MaskedInventory.InventoryViewProfile(
-                    data.fuels, stack -> this.getFuelTime(stack) > 0, false
+                    data.fuels, Arrays.asList(
+                        stack -> this.getFuelTime(stack) > 0,
+                        stack -> !stack.isEmpty()
+                    ), false
                 ), new MaskedInventory.InventoryViewProfile(
                     data.outputs, true
                 )

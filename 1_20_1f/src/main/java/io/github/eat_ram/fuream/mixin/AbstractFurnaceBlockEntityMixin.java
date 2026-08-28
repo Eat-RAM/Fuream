@@ -107,19 +107,24 @@ extends LockableContainerBlockEntity implements FureamDataHolder {
         FureamFurnaceData data =
         this.getFureamData("fuream", FureamFurnaceData.class);
         if (data != null) {
-            this.inventory = new MaskedInventory(
-                new MaskedInventory.InventoryViewProfile(
-                    data.inputs, false
-                ), new MaskedInventory.InventoryViewProfile(
-                    data.fuels, Arrays.asList(
-                        stack -> this.getFuelTime(stack) > 0,
-                        stack -> !stack.isEmpty()
-                    ), false
-                ), new MaskedInventory.InventoryViewProfile(
-                    data.outputs, true
-                )
-            );
+            this.inventory = this.fuream$createMaskedInventory(data);
         }
+    }
+
+    @Unique
+    private @NotNull MaskedInventory fuream$createMaskedInventory(
+        @NotNull FureamFurnaceData data
+    ) {
+        return new MaskedInventory(
+            new MaskedInventory.InventoryViewProfile(data.inputs, false),
+            new MaskedInventory.InventoryViewProfile(
+                data.fuels, Arrays.asList(
+                    stack -> this.getFuelTime(stack) > 0,
+                    stack -> !stack.isEmpty()
+                ), false
+            ),
+            new MaskedInventory.InventoryViewProfile(data.outputs, true)
+        );
     }
 
     // Not even skips "return true" because vanilla's is problematic
@@ -499,6 +504,17 @@ extends LockableContainerBlockEntity implements FureamDataHolder {
                     data.fuels.set(lastI, data.fuels.get(lastI));
                     lastI = config.getOutputSlotCount().get(type) - 1;
                     data.outputs.set(lastI, data.outputs.get(lastI));
+
+                    // Lithium upgrades furnace inventories to LithiumStackList
+                    // when a hopper or comparator first observes them. That
+                    // strips MaskedInventory's virtual-slot behavior and makes
+                    // vanilla stop at the first full output stack. Restore the
+                    // view before vanilla reads the three furnace slots.
+                    AbstractFurnaceBlockEntityMixin self =
+                    (AbstractFurnaceBlockEntityMixin)(Object)blockEntity;
+                    if (!(self.inventory instanceof MaskedInventory)) {
+                        self.inventory = self.fuream$createMaskedInventory(data);
+                    }
                 }
             }
         }
@@ -560,18 +576,7 @@ extends LockableContainerBlockEntity implements FureamDataHolder {
                 data.fuels.set(0, this.inventory.get(1));
                 data.outputs.set(0, this.inventory.get(2));
             }
-            this.inventory = new MaskedInventory(
-                new MaskedInventory.InventoryViewProfile(
-                    data.inputs, false
-                ), new MaskedInventory.InventoryViewProfile(
-                    data.fuels, Arrays.asList(
-                        stack -> this.getFuelTime(stack) > 0,
-                        stack -> !stack.isEmpty()
-                    ), false
-                ), new MaskedInventory.InventoryViewProfile(
-                    data.outputs, true
-                )
-            );
+            this.inventory = this.fuream$createMaskedInventory(data);
         }
         if (nbt.contains(FureamMain.DATA_KEY, NbtElement.COMPOUND_TYPE)) {
             NbtCompound nbt2 = nbt.getCompound(FureamMain.DATA_KEY);

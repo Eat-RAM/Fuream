@@ -22,6 +22,7 @@ public final class FurnaceRootNbtBridge {
     private static final String LOAD_HOOK_KEY = "io.github.eat_ram.fuream.root_nbt_load_hook";
     private static final String SAVE_HOOK_KEY = "io.github.eat_ram.fuream.root_nbt_save_hook";
     private static final String STATE_MAP_KEY = "io.github.eat_ram.fuream.root_nbt_state";
+    private static final String PASSIVE_PROJECTION_KEY = "PassiveProjected";
 
     private static final ConcurrentMap<Class<?>, Field> TAG_MAP_FIELDS = new ConcurrentHashMap<>();
     private static final ConcurrentMap<Class<?>, Method> TILE_ENTITY_METHODS = new ConcurrentHashMap<>();
@@ -52,6 +53,7 @@ public final class FurnaceRootNbtBridge {
         for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
             entry.getValue().readNbt(ctx, dataNbt);
         }
+        ctx.passiveProjected = hasPassiveProjectionMarker(dataNbt);
 
         if (stored[1] != null && !(stored[1] instanceof Integer)) {
             NativeNbtCompound rootNbt = new NativeNbtCompound(stored[1]);
@@ -85,10 +87,23 @@ public final class FurnaceRootNbtBridge {
             extra.writeNbt(ctx, dataNbt);
         }
 
+        boolean dataEmpty = dataNbt.keys().isEmpty();
+        if (ctx.passiveProjected) {
+            dataNbt.setInt(PASSIVE_PROJECTION_KEY, 1);
+        }
         stateMap().put(tileEntity, new Object[] {
-            dataNbt.keys().isEmpty() ? null : dataNbt.raw(),
+            shouldKeepDataTag(dataEmpty, ctx.passiveProjected)
+                ? dataNbt.raw() : null,
             ctx.burnTime, ctx.cookTime, ctx.cookTimeTotal
         });
+    }
+
+    public static boolean hasPassiveProjectionMarker(@Nullable NativeNbtCompound dataNbt) {
+        return dataNbt != null && dataNbt.getInt(PASSIVE_PROJECTION_KEY, 0) != 0;
+    }
+
+    static boolean shouldKeepDataTag(boolean dataEmpty, boolean passiveProjected) {
+        return !dataEmpty || passiveProjected;
     }
 
     public static @Nullable NativeNbtCompound capturedRoot(@NotNull BlockState state) {

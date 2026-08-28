@@ -17,7 +17,6 @@ import io.github.eat_ram.fuream.data.FureamDataHolder;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.data.FurnaceFureamDataRegistry;
 import io.github.eat_ram.fuream.logic.FureamFurnaceEngine;
-import io.github.eat_ram.fuream.logic.FuelTable;
 import io.github.eat_ram.fuream.logic.PassiveLaneProjection;
 import io.github.eat_ram.fuream.logic.PassiveLaneProjection.SelectionMode;
 import io.github.eat_ram.fuream.nbt.FurnaceRootNbtBridge;
@@ -130,6 +129,9 @@ public class FurnaceManager {
                     for (Map.Entry<String, FureamData> entry : ctx.extraData.entrySet()) {
                         entry.getValue().readNbt(ctx, dataCompound);
                     }
+                    ctx.passiveProjected = FurnaceRootNbtBridge.hasPassiveProjectionMarker(
+                        dataCompound
+                    );
                     ctx.burnTime = legacyNbt.getInt("BurnTime", ctx.burnTime);
                     ctx.cookTime = legacyNbt.getInt("CookTime", ctx.cookTime);
                     ctx.cookTimeTotal = legacyNbt.getInt("CookTimeTotal", ctx.cookTimeTotal);
@@ -143,9 +145,15 @@ public class FurnaceManager {
                 if (!loaded) {
                     migrateVanillaLane(ctx, (Furnace) state);
                 } else if (enabled) {
-                    clearNativeLane((Furnace) state);
-                } else {
+                    if (ctx.passiveProjected) {
+                        resumeActive(ctx, (Furnace) state);
+                    } else {
+                        absorbVanillaLane(ctx, (Furnace) state);
+                    }
+                } else if (!ctx.passiveProjected) {
                     projectPassiveLane(ctx, (Furnace) state);
+                } else {
+                    syncPassiveTimes(ctx, (Furnace) state);
                 }
                 if (hasLegacyData) {
                     removeLegacyPdc(legacyNbt);
@@ -192,7 +200,7 @@ public class FurnaceManager {
                 if (!ctx.passiveProjected) {
                     absorbVanillaLane(ctx, (Furnace) state);
                 } else {
-                    syncPassiveLane(ctx, (Furnace) state);
+                    syncPassiveTimes(ctx, (Furnace) state);
                 }
                 FurnaceRootNbtBridge.store(state, ctx);
                 ctx.dirty = false;
@@ -207,9 +215,14 @@ public class FurnaceManager {
         @NotNull FurnaceContext ctx, @NotNull Furnace furnaceState
     ) {
         FurnaceInventory inv = furnaceState.getInventory();
+        boolean hadNativeItems = !ItemCompat.isEmpty(inv.getSmelting()) ||
+            !ItemCompat.isEmpty(inv.getFuel()) || !ItemCompat.isEmpty(inv.getResult());
         inv.setSmelting(absorbLaneStack(ctx.data.inputs, inv.getSmelting()));
         inv.setFuel(absorbLaneStack(ctx.data.fuels, inv.getFuel()));
         inv.setResult(absorbLaneStack(ctx.data.outputs, inv.getResult()));
+        if (hadNativeItems) {
+            ctx.dirty = true;
+        }
     }
 
     private static @Nullable ItemStack absorbLaneStack(
@@ -289,10 +302,6 @@ public class FurnaceManager {
         return config != null && config.getEnabledFurnaceTypes().contains(type);
     }
 
-    private static void clearNativeLane(@NotNull Furnace furnace) {
-        furnace.getInventory().clear();
-    }
-
     private static void projectPassiveLane(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
         closeSessions(ctx);
         FurnaceInventory inventory = furnace.getInventory();
@@ -341,57 +350,7 @@ public class FurnaceManager {
         ctx.dirty = true;
     }
 
-    private static void syncPassiveLane(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
-        FurnaceInventory inventory = furnace.getInventory();
-        ItemStack input = inventory.getSmelting();
-        ItemStack fuel = inventory.getFuel();
-        ItemStack output = inventory.getResult();
-        boolean changed = false;
-
-        if (ItemCompat.isEmpty(input) && !ctx.passiveInput.isExhausted()) {
-            ItemStack next = PassiveLaneProjection.takeNext(
-                ctx.data.inputs, SelectionMode.FIRST_PRESENT, ctx.passiveInput
-            );
-            inventory.setSmelting(next);
-            changed = !ItemCompat.isEmpty(next);
-        }
-
-        if (ItemCompat.isEmpty(fuel)) {
-            if (!ctx.passiveFuel.isExhausted()) {
-                ItemStack next = PassiveLaneProjection.takeNext(
-                    ctx.data.fuels, SelectionMode.FUEL_THEN_PRESENT, ctx.passiveFuel
-                );
-                inventory.setFuel(next);
-                changed |= !ItemCompat.isEmpty(next);
-            }
-        } else if (!FuelTable.isFuel(fuel) &&
-                   PassiveLaneProjection.hasPreferredFuel(ctx.data.fuels, ctx.passiveFuel)) {
-            ItemStack remainder = PassiveLaneProjection.restore(
-                ctx.data.fuels, fuel, ctx.passiveFuel
-            );
-            if (ItemCompat.isEmpty(remainder)) {
-                inventory.setFuel(PassiveLaneProjection.takeNext(
-                    ctx.data.fuels, SelectionMode.FUEL_THEN_PRESENT, ctx.passiveFuel
-                ));
-                changed = true;
-            } else {
-                inventory.setFuel(remainder);
-                changed = remainder.getAmount() < fuel.getAmount();
-                ctx.passiveFuel.blockPreferredFuelSwitch();
-            }
-        }
-
-        if (ItemCompat.isEmpty(output) && !ctx.passiveOutput.isExhausted()) {
-            ItemStack next = PassiveLaneProjection.takeNext(
-                ctx.data.outputs, SelectionMode.FIRST_PRESENT, ctx.passiveOutput
-            );
-            inventory.setResult(next);
-            changed |= !ItemCompat.isEmpty(next);
-        }
-
-        if (changed) {
-            ctx.dirty = true;
-        }
+    private static void syncPassiveTimes(@NotNull FurnaceContext ctx, @NotNull Furnace furnace) {
         ctx.burnTime = FurnaceCompat.getBurnTime(furnace);
         ctx.cookTime = FurnaceCompat.getCookTime(furnace);
         ctx.cookTimeTotal = FurnaceCompat.getCookTimeTotal(furnace, ctx.cookTimeTotal);
@@ -447,7 +406,7 @@ public class FurnaceManager {
             } else if (!ctx.passiveProjected && state instanceof Furnace) {
                 projectPassiveLane(ctx, (Furnace) state);
             } else if (ctx.passiveProjected && state instanceof Furnace) {
-                syncPassiveLane(ctx, (Furnace) state);
+                syncPassiveTimes(ctx, (Furnace) state);
             }
 
             // Periodic save if dirty

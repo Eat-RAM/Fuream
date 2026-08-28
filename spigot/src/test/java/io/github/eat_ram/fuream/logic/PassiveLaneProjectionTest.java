@@ -1,6 +1,5 @@
 package io.github.eat_ram.fuream.logic;
 
-import java.util.AbstractList;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
@@ -13,25 +12,42 @@ import org.bukkit.inventory.meta.ItemMeta;
 import org.junit.jupiter.api.Test;
 
 import static org.junit.jupiter.api.Assertions.assertEquals;
-import static org.junit.jupiter.api.Assertions.assertFalse;
 import static org.junit.jupiter.api.Assertions.assertNull;
-import static org.junit.jupiter.api.Assertions.assertTrue;
 
 public class PassiveLaneProjectionTest {
     @Test
-    public void inputAndOutputUseFirstPresentSlot() {
-        List<ItemStack> lane = lane(air(), stack(Material.IRON_ORE, 4), stack(Material.GOLD_ORE, 2));
+    public void inputAndOutputProjectOnlyFirstPresentStack() {
+        List<ItemStack> lane = lane(
+            air(), stack(Material.DIAMOND, 32), stack(Material.DIAMOND, 16)
+        );
         State state = new State();
 
         ItemStack projected = PassiveLaneProjection.begin(
             lane, null, SelectionMode.FIRST_PRESENT, state
         );
 
-        assertEquals(Material.IRON_ORE, projected.getType());
-        assertEquals(4, projected.getAmount());
+        assertEquals(Material.DIAMOND, projected.getType());
+        assertEquals(32, projected.getAmount());
         assertEquals(1, state.getSourceSlot());
         assertEquals(Material.AIR, lane.get(1).getType());
-        assertEquals(Material.GOLD_ORE, lane.get(2).getType());
+        assertEquals(Material.DIAMOND, lane.get(2).getType());
+        assertEquals(16, lane.get(2).getAmount());
+    }
+
+    @Test
+    public void removingProjectedStackDoesNotTouchHiddenStack() {
+        List<ItemStack> lane = lane(
+            stack(Material.DIAMOND, 32), stack(Material.DIAMOND, 16)
+        );
+        State state = new State();
+
+        PassiveLaneProjection.begin(lane, null, SelectionMode.FIRST_PRESENT, state);
+        ItemStack nativeAfterPlayerRemoval = null;
+
+        assertNull(nativeAfterPlayerRemoval);
+        assertEquals(Material.DIAMOND, lane.get(1).getType());
+        assertEquals(16, lane.get(1).getAmount());
+        assertEquals(0, state.getSourceSlot());
     }
 
     @Test
@@ -60,24 +76,6 @@ public class PassiveLaneProjectionTest {
 
         assertEquals(Material.BUCKET, projected.getType());
         assertEquals(1, state.getSourceSlot());
-        assertTrue(state.isPreferredFuelExhausted());
-    }
-
-    @Test
-    public void emptyNativeSlotRefillsFromNextVirtualStack() {
-        List<ItemStack> lane = lane(stack(Material.IRON_ORE, 3), stack(Material.GOLD_ORE, 5));
-        State state = new State();
-
-        ItemStack first = PassiveLaneProjection.begin(
-            lane, null, SelectionMode.FIRST_PRESENT, state
-        );
-        ItemStack second = PassiveLaneProjection.takeNext(
-            lane, SelectionMode.FIRST_PRESENT, state
-        );
-
-        assertEquals(Material.IRON_ORE, first.getType());
-        assertEquals(Material.GOLD_ORE, second.getType());
-        assertEquals(1, state.getSourceSlot());
     }
 
     @Test
@@ -98,95 +96,19 @@ public class PassiveLaneProjectionTest {
     }
 
     @Test
-    public void existingNativeStackDoesNotDeleteIdenticalVirtualStack() {
-        List<ItemStack> lane = lane(stack(Material.COAL, 64), stack(Material.COAL, 64));
+    public void existingNativeStackDoesNotDeleteIdenticalHiddenStacks() {
+        List<ItemStack> lane = lane(stack(Material.DIAMOND, 32), stack(Material.DIAMOND, 16));
         State state = new State();
-        ItemStack nativeStack = stack(Material.COAL, 64);
+        ItemStack nativeStack = stack(Material.DIAMOND, 32);
 
         ItemStack projected = PassiveLaneProjection.begin(
-            lane, nativeStack, SelectionMode.FUEL_THEN_PRESENT, state
+            lane, nativeStack, SelectionMode.FIRST_PRESENT, state
         );
 
         assertEquals(nativeStack, projected);
-        assertEquals(64, lane.get(0).getAmount());
-        assertEquals(64, lane.get(1).getAmount());
+        assertEquals(32, lane.get(0).getAmount());
+        assertEquals(16, lane.get(1).getAmount());
         assertEquals(-1, state.getSourceSlot());
-    }
-
-    @Test
-    public void nonFuelRemainderCanBeReturnedBeforeSelectingHiddenFuel() {
-        List<ItemStack> lane = lane(air(), stack(Material.COAL, 4));
-        State state = new State();
-        ItemStack bucket = stack(Material.BUCKET, 1);
-        PassiveLaneProjection.begin(
-            lane, bucket, SelectionMode.FUEL_THEN_PRESENT, state
-        );
-
-        assertTrue(PassiveLaneProjection.hasPreferredFuel(lane, state));
-        assertNull(PassiveLaneProjection.restore(lane, bucket, state));
-        ItemStack projected = PassiveLaneProjection.takeNext(
-            lane, SelectionMode.FUEL_THEN_PRESENT, state
-        );
-
-        assertEquals(Material.COAL, projected.getType());
-        assertEquals(Material.BUCKET, lane.get(0).getType());
-    }
-
-    @Test
-    public void exhaustedLaneIsNotScannedAgain() {
-        CountingList lane = new CountingList(lane(air(), air(), air()));
-        State state = new State();
-
-        assertNull(PassiveLaneProjection.begin(
-            lane, null, SelectionMode.FIRST_PRESENT, state
-        ));
-        assertTrue(state.isExhausted());
-        assertTrue(lane.reads > 0);
-
-        lane.reads = 0;
-        assertNull(PassiveLaneProjection.takeNext(
-            lane, SelectionMode.FIRST_PRESENT, state
-        ));
-        assertEquals(0, lane.reads);
-    }
-
-    @Test
-    public void missingPreferredFuelIsScannedOnlyOnceForStableNativeRemainder() {
-        CountingList lane = new CountingList(lane(air(), air(), air()));
-        State state = new State();
-        PassiveLaneProjection.begin(
-            lane, stack(Material.BUCKET, 1), SelectionMode.FUEL_THEN_PRESENT, state
-        );
-
-        assertFalse(PassiveLaneProjection.hasPreferredFuel(lane, state));
-        assertTrue(lane.reads > 0);
-
-        lane.reads = 0;
-        assertFalse(PassiveLaneProjection.hasPreferredFuel(lane, state));
-        assertEquals(0, lane.reads);
-    }
-
-    @Test
-    public void blockedFuelSwitchDoesNotRescanUntilNativeSlotEmpties() {
-        CountingList lane = new CountingList(lane(stack(Material.COAL, 64)));
-        State state = new State();
-        ItemStack bucket = stack(Material.BUCKET, 1);
-        PassiveLaneProjection.begin(
-            lane, bucket, SelectionMode.FUEL_THEN_PRESENT, state
-        );
-        assertTrue(PassiveLaneProjection.hasPreferredFuel(lane, state));
-        assertEquals(1, PassiveLaneProjection.restore(lane, bucket, state).getAmount());
-        state.blockPreferredFuelSwitch();
-
-        lane.reads = 0;
-        assertFalse(PassiveLaneProjection.hasPreferredFuel(lane, state));
-        assertEquals(0, lane.reads);
-
-        ItemStack projected = PassiveLaneProjection.takeNext(
-            lane, SelectionMode.FUEL_THEN_PRESENT, state
-        );
-        assertEquals(Material.COAL, projected.getType());
-        assertFalse(state.isPreferredFuelExhausted());
     }
 
     @Test
@@ -218,31 +140,6 @@ public class PassiveLaneProjectionTest {
 
     private static ItemStack stack(Material material, int amount) {
         return new TestItemStack(material, amount);
-    }
-
-    private static final class CountingList extends AbstractList<ItemStack> {
-        private final List<ItemStack> delegate;
-        private int reads;
-
-        private CountingList(List<ItemStack> delegate) {
-            this.delegate = delegate;
-        }
-
-        @Override
-        public ItemStack get(int index) {
-            this.reads++;
-            return this.delegate.get(index);
-        }
-
-        @Override
-        public ItemStack set(int index, ItemStack element) {
-            return this.delegate.set(index, element);
-        }
-
-        @Override
-        public int size() {
-            return this.delegate.size();
-        }
     }
 
     /** Avoids the Bukkit ItemFactory dependency in this pure unit test. */

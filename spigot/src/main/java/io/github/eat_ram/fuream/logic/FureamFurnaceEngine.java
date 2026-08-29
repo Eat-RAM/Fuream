@@ -1,55 +1,39 @@
 package io.github.eat_ram.fuream.logic;
 
-import java.lang.reflect.Constructor;
-import java.lang.reflect.Method;
 import java.util.List;
 
-import io.github.eat_ram.fuream.api.FureamWorldConfig;
-import io.github.eat_ram.fuream.api.FurnaceType;
-import io.github.eat_ram.fuream.compat.BlockCompat;
+import io.github.eat_ram.fuream.ResolvedFurnaceConfig;
+import io.github.eat_ram.fuream.compat.FurnaceEventDispatcher;
+import io.github.eat_ram.fuream.compat.FurnaceEventCompat;
 import io.github.eat_ram.fuream.compat.ItemCompat;
 import io.github.eat_ram.fuream.compat.RecipeCompat;
 import io.github.eat_ram.fuream.compat.RecipeHandle;
-import io.github.eat_ram.fuream.compat.ServerVersion;
-import io.github.eat_ram.fuream.compat.FurnaceCompat;
 import io.github.eat_ram.fuream.compat.VersionAdapters;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
 import io.github.eat_ram.fuream.util.KeyableItemStack;
-import org.bukkit.Bukkit;
 import org.bukkit.Material;
 import org.bukkit.World;
 import org.bukkit.block.Block;
-import org.bukkit.block.BlockState;
-import org.bukkit.event.Cancellable;
-import org.bukkit.event.Event;
 import org.bukkit.event.inventory.FurnaceBurnEvent;
 import org.bukkit.event.inventory.FurnaceSmeltEvent;
-import org.bukkit.inventory.FurnaceInventory;
 import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class FureamFurnaceEngine {
-    public static void tick(FurnaceContext ctx, FureamWorldConfig config) {
+public final class FureamFurnaceEngine {
+    public static void tick(FurnaceContext ctx, ResolvedFurnaceConfig config) {
         World world = ctx.getWorld();
         if (world == null) return;
         FureamFurnaceData data = ctx.data;
-        int inputCount = slotCount(config.getInputSlotCount().get(ctx.type));
-        int fuelCount = slotCount(config.getFuelSlotCount().get(ctx.type));
-        int outputCount = slotCount(config.getOutputSlotCount().get(ctx.type));
+        int inputCount = config.inputSlots;
+        int fuelCount = config.fuelSlots;
+        int outputCount = config.outputSlots;
         ensureSize(data.inputs, inputCount);
         ensureSize(data.fuels, fuelCount);
         ensureSize(data.outputs, outputCount);
 
         Block block = world.getBlockAt(ctx.pos.x, ctx.pos.y, ctx.pos.z);
-        BlockState state = block.getState();
-        if (!(state instanceof org.bukkit.block.Furnace)) return;
-        org.bukkit.block.Furnace furnace = (org.bukkit.block.Furnace) state;
-        ingestVanillaLane(ctx, furnace.getInventory(), inputCount, fuelCount, outputCount);
-        FurnaceCompat.setCookTime(furnace, 0);
-        FurnaceCompat.setBurnTime(furnace, 0);
-
         if (ctx.burnTime > 0) {
             ctx.burnTime--;
             ctx.dirty = true;
@@ -88,7 +72,7 @@ public abstract class FureamFurnaceEngine {
             ctx.dirty = true;
             if (ctx.cookTime >= Math.max(1, ctx.cookTimeTotal)) {
                 FurnaceSmeltEvent event = new FurnaceSmeltEvent(block, one(input), result.clone());
-                Bukkit.getPluginManager().callEvent(event);
+                FurnaceEventDispatcher.call(event);
                 ItemStack eventResult = event.getResult();
                 if (event.isCancelled() || ItemCompat.isEmpty(eventResult) ||
                     !canFitAll(data.outputs, eventResult, outputCount)) {
@@ -112,19 +96,16 @@ public abstract class FureamFurnaceEngine {
             ctx.dirty = true;
         }
 
-        BlockCompat.setLit(block, ctx.burnTime > 0);
-        io.github.eat_ram.fuream.hook.FurnaceManager.refreshSessions(ctx);
     }
 
     private static void ignite(FurnaceContext ctx, Block block, int fuelCount) {
         int fuelSlot = firstFuel(ctx.data.fuels, fuelCount);
         if (fuelSlot < 0) return;
         ItemStack fuel = ctx.data.fuels.get(fuelSlot);
-        int fuelTime = FuelTable.getFuelTime(fuel);
-        if (ctx.type != FurnaceType.FURNACE) fuelTime = Math.max(1, fuelTime / 2);
+        int fuelTime = effectiveFuelTime(FuelTable.getFuelTime(fuel), ctx.type);
 
         FurnaceBurnEvent event = new FurnaceBurnEvent(block, one(fuel), fuelTime);
-        Bukkit.getPluginManager().callEvent(event);
+        FurnaceEventDispatcher.call(event);
         if (event.isCancelled() || !event.isBurning() || event.getBurnTime() <= 0) return;
 
         ctx.burnTime = event.getBurnTime();
@@ -140,22 +121,9 @@ public abstract class FureamFurnaceEngine {
     }
 
     private static int fireStartSmelt(Block block, ItemStack input, RecipeHandle recipe) {
-        if (!ServerVersion.CURRENT.atLeast(1, 18)) return recipe.cookingTime;
-        try {
-            Class<?> eventClass = Class.forName("org.bukkit.event.inventory.FurnaceStartSmeltEvent");
-            for (Constructor<?> constructor : eventClass.getConstructors()) {
-                Class<?>[] types = constructor.getParameterTypes();
-                if (types.length != 3 || !types[0].isInstance(block) || !types[1].isInstance(input) ||
-                    !types[2].isInstance(recipe.nativeRecipe)) continue;
-                Event event = (Event) constructor.newInstance(block, one(input), recipe.nativeRecipe);
-                Bukkit.getPluginManager().callEvent(event);
-                if (event instanceof Cancellable && ((Cancellable) event).isCancelled()) return Integer.MAX_VALUE;
-                Method getter = eventClass.getMethod("getTotalCookTime");
-                return ((Number) getter.invoke(event)).intValue();
-            }
-        } catch (ReflectiveOperationException | LinkageError ignored) {
-        }
-        return recipe.cookingTime;
+        return FurnaceEventCompat.fireStartSmelt(
+            block, one(input), recipe.nativeRecipe, recipe.cookingTime
+        );
     }
 
     private static RecipeHandle getRecipeForInput(ItemStack input, FurnaceContext ctx) {
@@ -185,34 +153,22 @@ public abstract class FureamFurnaceEngine {
             }
         }
         if (bucketSlot < 0) return;
-        int empty = firstEmpty(fuels, maxSlots);
-        if (empty < 0) return;
         ItemStack found = fuels.get(bucketSlot);
         found.setAmount(found.getAmount() - 1);
-        if (found.getAmount() <= 0) fuels.set(bucketSlot, ItemCompat.empty());
+        if (found.getAmount() <= 0) {
+            fuels.set(bucketSlot, new ItemStack(waterBucket));
+            return;
+        }
+        int empty = firstEmpty(fuels, maxSlots);
+        if (empty < 0) {
+            found.setAmount(found.getAmount() + 1);
+            return;
+        }
         fuels.set(empty, new ItemStack(waterBucket));
     }
 
-    private static void ingestVanillaLane(
-        FurnaceContext ctx, FurnaceInventory inventory, int inputCount, int fuelCount, int outputCount
-    ) {
-        ItemStack smelting = inventory.getSmelting();
-        if (!ItemCompat.isEmpty(smelting)) {
-            ItemStack remainder = insertStackIntoList(ctx.data.inputs, smelting, inputCount);
-            inventory.setSmelting(ItemCompat.isEmpty(remainder) ? null : remainder);
-            ctx.dirty = true;
-        }
-        ItemStack fuel = inventory.getFuel();
-        if (!ItemCompat.isEmpty(fuel)) {
-            ItemStack remainder = insertStackIntoList(ctx.data.fuels, fuel, fuelCount);
-            inventory.setFuel(ItemCompat.isEmpty(remainder) ? null : remainder);
-            ctx.dirty = true;
-        }
-        ItemStack result = inventory.getResult();
-        if (!ItemCompat.isEmpty(result)) {
-            inventory.setResult(recoverVanillaOutput(ctx.data.outputs, result, outputCount));
-            ctx.dirty = true;
-        }
+    static int effectiveFuelTime(int vanillaFuelTime, io.github.eat_ram.fuream.api.FurnaceType type) {
+        return Math.max(0, vanillaFuelTime);
     }
 
     public static ItemStack insertStackIntoList(List<ItemStack> slots, ItemStack incoming, int maxSlots) {
@@ -311,15 +267,10 @@ public abstract class FureamFurnaceEngine {
         return true;
     }
 
-    private static int slotCount(Integer configured) {
-        return Math.max(1, configured == null ? 9 : configured);
-    }
-
     private static void ensureSize(List<ItemStack> slots, int size) {
         while (slots.size() < size) slots.add(ItemCompat.empty());
     }
 
     private FureamFurnaceEngine() {
-        throw new UnsupportedOperationException();
     }
 }

@@ -1,5 +1,7 @@
 package io.github.eat_ram.fuream.compat;
 
+import org.bukkit.block.Block;
+
 /** Loads one of the four internal adapters without linking newer Bukkit API types. */
 public final class VersionAdapters {
     private static final VersionAdapter CURRENT = select(ServerVersion.CURRENT);
@@ -49,6 +51,21 @@ public final class VersionAdapters {
         public final boolean usesDataComponents() {
             return this.dataComponents;
         }
+
+        @Override
+        public final FurnaceStateTransaction beginFurnaceTransaction(Block block) {
+            return FurnaceStateTransaction.begin(block);
+        }
+
+        @Override
+        public final void setFurnaceLit(Block block, boolean lit) {
+            BlockCompat.setLit(block, lit);
+        }
+
+        @Override
+        public final void requestComparatorRecalculation(Block furnace) {
+            ComparatorCompat.requestRecalculation(furnace);
+        }
     }
 
     private static final class LegacyAdapter extends BaseAdapter {
@@ -76,6 +93,5 @@ public final class VersionAdapters {
     }
 
     private VersionAdapters() {
-        throw new UnsupportedOperationException();
     }
 }

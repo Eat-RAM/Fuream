@@ -92,14 +92,14 @@ public class FureamFurnaceEngineTest {
     }
 
     @Test
-    public void wetSpongeDoesNotConvertBucketWhenFuelRegionIsFull() {
+    public void wetSpongeUsesFreedSingleBucketSlotWhenFuelRegionIsFull() {
         List<ItemStack> fuels = new ArrayList<>();
         fuels.add(stack(Material.BUCKET, 1));
         fuels.add(stack(Material.COAL, 1));
 
         FureamFurnaceEngine.handleWetSponge(stack(Material.WET_SPONGE, 1), fuels, 2);
 
-        assertEquals(Material.BUCKET, fuels.get(0).getType());
+        assertEquals(Material.WATER_BUCKET, fuels.get(0).getType());
         assertEquals(1, fuels.get(0).getAmount());
         assertEquals(Material.COAL, fuels.get(1).getType());
     }
@@ -112,9 +112,28 @@ public class FureamFurnaceEngineTest {
 
         FureamFurnaceEngine.handleWetSponge(stack(Material.WET_SPONGE, 1), fuels, 2);
 
-        assertEquals(Material.AIR, fuels.get(0).getType());
-        assertEquals(Material.WATER_BUCKET, fuels.get(1).getType());
+        assertEquals(Material.WATER_BUCKET, fuels.get(0).getType());
+        assertEquals(Material.AIR, fuels.get(1).getType());
         assertEquals(2, fuels.size());
+    }
+
+    @Test
+    public void wetSpongeDoesNotConsumeFromMultiBucketStackWithoutSpace() {
+        List<ItemStack> fuels = new ArrayList<>();
+        fuels.add(stack(Material.BUCKET, 2));
+        fuels.add(stack(Material.COAL, 1));
+
+        FureamFurnaceEngine.handleWetSponge(stack(Material.WET_SPONGE, 1), fuels, 2);
+
+        assertEquals(Material.BUCKET, fuels.get(0).getType());
+        assertEquals(2, fuels.get(0).getAmount());
+    }
+
+    @Test
+    public void specialFurnacesKeepTheFullVanillaFuelDuration() {
+        assertEquals(1600, FureamFurnaceEngine.effectiveFuelTime(1600, FurnaceType.FURNACE));
+        assertEquals(1600, FureamFurnaceEngine.effectiveFuelTime(1600, FurnaceType.SMOKER));
+        assertEquals(1600, FureamFurnaceEngine.effectiveFuelTime(1600, FurnaceType.BLAST_FURNACE));
     }
 
     @Test

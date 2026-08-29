@@ -74,7 +74,4 @@ public final class ServerVersion implements Comparable<ServerVersion> {
         return major + "." + minor + (patch == 0 ? "" : "." + patch);
     }
 
-    private ServerVersion() {
-        throw new UnsupportedOperationException();
-    }
 }

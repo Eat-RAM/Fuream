@@ -12,22 +12,34 @@ import org.bukkit.event.inventory.InventoryDragEvent;
 import org.bukkit.inventory.Inventory;
 
 public class GuiListener implements Listener {
-    @EventHandler(priority = EventPriority.HIGHEST)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryClick(InventoryClickEvent event) {
         FureamScreenInventory session = session(event.getInventory());
         if (session == null || !(event.getWhoClicked() instanceof Player)) return;
+        FurnaceManager.FurnaceContext ctx = FurnaceManager.prepareForInteraction(
+            new FurnacePos(session.location)
+        );
+        if (ctx == null) {
+            event.setCancelled(true);
+            return;
+        }
         session.handler.handleClick(event, (Player) event.getWhoClicked());
-        FurnaceManager.FurnaceContext ctx = context(session);
-        if (ctx != null) ctx.dirty = true;
+        FurnaceManager.finishInteraction(ctx);
     }
 
-    @EventHandler(priority = EventPriority.HIGHEST)
+    @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
     public void onInventoryDrag(InventoryDragEvent event) {
         FureamScreenInventory session = session(event.getInventory());
         if (session == null) return;
+        FurnaceManager.FurnaceContext ctx = FurnaceManager.prepareForInteraction(
+            new FurnacePos(session.location)
+        );
+        if (ctx == null) {
+            event.setCancelled(true);
+            return;
+        }
         session.handler.handleDrag(event);
-        FurnaceManager.FurnaceContext ctx = context(session);
-        if (ctx != null) ctx.dirty = true;
+        FurnaceManager.finishInteraction(ctx);
     }
 
     @EventHandler(priority = EventPriority.MONITOR)
@@ -36,7 +48,7 @@ public class GuiListener implements Listener {
         if (session == null) return;
         FurnaceManager.FurnaceContext ctx = context(session);
         if (ctx != null) {
-            ctx.sessions.remove(session.viewerId);
+            ctx.sessions.remove(session.viewerId, session);
             FurnaceManager.saveToNbt(ctx);
         }
     }
@@ -47,6 +59,6 @@ public class GuiListener implements Listener {
     }
 
     private static FurnaceManager.FurnaceContext context(FureamScreenInventory session) {
-        return FurnaceManager.CONTEXTS.get(new FurnacePos(session.location));
+        return FurnaceManager.getContext(new FurnacePos(session.location));
     }
 }

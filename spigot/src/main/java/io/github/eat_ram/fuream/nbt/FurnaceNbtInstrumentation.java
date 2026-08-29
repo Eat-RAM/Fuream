@@ -1,17 +1,22 @@
 package io.github.eat_ram.fuream.nbt;
 
 import java.lang.instrument.Instrumentation;
+import java.io.File;
 import java.lang.reflect.Method;
 import java.lang.reflect.Modifier;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.List;
-import java.util.function.BiConsumer;
+import java.util.HashMap;
+import java.util.Map;
 
 import net.bytebuddy.agent.ByteBuddyAgent;
 import net.bytebuddy.agent.builder.AgentBuilder;
 import net.bytebuddy.asm.Advice;
+import net.bytebuddy.dynamic.ClassFileLocator;
+import net.bytebuddy.dynamic.loading.ClassInjector;
 import net.bytebuddy.description.method.MethodDescription;
+import net.bytebuddy.description.type.TypeDescription;
 import net.bytebuddy.matcher.ElementMatcher;
 import org.bukkit.Bukkit;
 import org.bukkit.plugin.java.JavaPlugin;
@@ -24,14 +29,9 @@ import static net.bytebuddy.matcher.ElementMatchers.takesArguments;
  * Spigot otherwise discards unknown block-entity root tags during load/save.
  */
 public final class FurnaceNbtInstrumentation {
-    private static final String INSTALLED_KEY = "io.github.eat_ram.fuream.root_nbt_instrumented";
+    private static final String RUNTIME_NAME = FurnaceNbtRuntime.class.getName();
 
     public static void install(JavaPlugin plugin) {
-        FurnaceRootNbtBridge.installCallbacks();
-        if (Boolean.TRUE.equals(System.getProperties().get(INSTALLED_KEY))) {
-            return;
-        }
-
         Class<?> furnaceClass = findFurnaceClass();
         Method loadMethod = findPersistenceMethod(furnaceClass, true);
         Method saveMethod = findPersistenceMethod(furnaceClass, false);
@@ -56,6 +56,14 @@ public final class FurnaceNbtInstrumentation {
             throw new IllegalStateException("Furnace block entity class is not modifiable: " + furnaceClass.getName());
         }
 
+        Class<?> runtimeClass = installRuntime(instrumentation, furnaceClass, plugin);
+        FurnaceRootNbtBridge.bindRuntime(runtimeClass);
+        try {
+            if (Boolean.TRUE.equals(runtimeClass.getMethod("isInstalled").invoke(null))) return;
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Unable to query root-NBT runtime", e);
+        }
+
         ElementMatcher.Junction<MethodDescription> loadMatcher = named(loadMethod.getName())
             .and(takesArguments(loadMethod.getParameterTypes()));
         ElementMatcher.Junction<MethodDescription> saveMatcher = named(saveMethod.getName())
@@ -70,10 +78,40 @@ public final class FurnaceNbtInstrumentation {
                 .visit(Advice.to(SaveAdvice.class).on(saveMatcher)))
             .installOn(instrumentation);
 
-        System.getProperties().put(INSTALLED_KEY, Boolean.TRUE);
+        try {
+            runtimeClass.getMethod("markInstalled").invoke(null);
+        } catch (ReflectiveOperationException e) {
+            throw new IllegalStateException("Unable to finalize root-NBT runtime", e);
+        }
         plugin.getLogger().info(
             "Installed Fabric-compatible furnace root-NBT hooks on " + furnaceClass.getName()
         );
+    }
+
+    private static Class<?> installRuntime(
+        Instrumentation instrumentation, Class<?> furnaceClass, JavaPlugin plugin
+    ) {
+        try {
+            return Class.forName(RUNTIME_NAME, false, null);
+        } catch (ClassNotFoundException ignored) {
+        }
+        try {
+            File injectionFolder = new File(plugin.getDataFolder(), ".runtime");
+            if (!injectionFolder.isDirectory() && !injectionFolder.mkdirs()) {
+                throw new IllegalStateException("Unable to create " + injectionFolder);
+            }
+            Map<TypeDescription, byte[]> definitions = new HashMap<>();
+            definitions.put(
+                new TypeDescription.ForLoadedType(FurnaceNbtRuntime.class),
+                ClassFileLocator.ForClassLoader.read(FurnaceNbtRuntime.class)
+            );
+            ClassInjector.UsingInstrumentation.of(
+                injectionFolder, ClassInjector.UsingInstrumentation.Target.BOOTSTRAP, instrumentation
+            ).inject(definitions);
+            return Class.forName(RUNTIME_NAME, true, null);
+        } catch (Exception e) {
+            throw new IllegalStateException("Unable to install the root-NBT runtime", e);
+        }
     }
 
     private static Class<?> findFurnaceClass() {
@@ -152,8 +190,7 @@ public final class FurnaceNbtInstrumentation {
     }
 
     public static class LoadAdvice {
-        @Advice.OnMethodExit
-        @SuppressWarnings("unchecked")
+        @Advice.OnMethodExit(suppress = Throwable.class)
         public static void exit(
             @Advice.This Object furnace,
             @Advice.AllArguments Object[] arguments
@@ -168,18 +205,12 @@ public final class FurnaceNbtInstrumentation {
                 }
             }
             if (rootNbt == null) return;
-            Object callback = System.getProperties().get(
-                "io.github.eat_ram.fuream.root_nbt_load_hook"
-            );
-            if (callback instanceof BiConsumer) {
-                ((BiConsumer<Object, Object>) callback).accept(furnace, rootNbt);
-            }
+            FurnaceNbtRuntime.capture(furnace, rootNbt, "FureamData");
         }
     }
 
     public static class SaveAdvice {
-        @Advice.OnMethodExit
-        @SuppressWarnings("unchecked")
+        @Advice.OnMethodExit(suppress = Throwable.class)
         public static void exit(
             @Advice.This Object furnace,
             @Advice.AllArguments Object[] arguments
@@ -194,16 +225,10 @@ public final class FurnaceNbtInstrumentation {
                 }
             }
             if (rootNbt == null) return;
-            Object callback = System.getProperties().get(
-                "io.github.eat_ram.fuream.root_nbt_save_hook"
-            );
-            if (callback instanceof BiConsumer) {
-                ((BiConsumer<Object, Object>) callback).accept(furnace, rootNbt);
-            }
+            FurnaceNbtRuntime.inject(furnace, rootNbt, "FureamData");
         }
     }
 
     private FurnaceNbtInstrumentation() {
-        throw new UnsupportedOperationException();
     }
 }

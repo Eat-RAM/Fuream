@@ -15,8 +15,6 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-import static io.github.eat_ram.fuream.CollectionUtil.newDefaultedArrayList;
-
 /**
  * The server-side smelting state of a virtual furnace: inputs, fuels, outputs,
  * recipe overrides, and accumulated experience.
@@ -39,12 +37,43 @@ public class FureamFurnaceData implements FureamData {
     public float experience;
 
     public FureamFurnaceData() {
-        this.inputs = newDefaultedArrayList(new ItemStack(Material.AIR), 1);
-        this.fuels = newDefaultedArrayList(new ItemStack(Material.AIR), 1);
-        this.outputs = newDefaultedArrayList(new ItemStack(Material.AIR), 1);
+        this.inputs = new ArrayList<>();
+        this.fuels = new ArrayList<>();
+        this.outputs = new ArrayList<>();
+        this.inputs.add(new ItemStack(Material.AIR));
+        this.fuels.add(new ItemStack(Material.AIR));
+        this.outputs.add(new ItemStack(Material.AIR));
         this.recipeOverridingInput = new ItemStack(Material.AIR);
         this.overriddenRecipes = new HashMap<>();
         this.runningRecipe = null;
+    }
+
+    public @NotNull FureamFurnaceData copy() {
+        FureamFurnaceData copy = new FureamFurnaceData();
+        copy.inputs.clear();
+        copyStacks(this.inputs, copy.inputs);
+        copy.fuels.clear();
+        copyStacks(this.fuels, copy.fuels);
+        copy.outputs.clear();
+        copyStacks(this.outputs, copy.outputs);
+        copy.recipeOverridingInput = ItemCompat.isEmpty(this.recipeOverridingInput)
+            ? ItemCompat.empty() : this.recipeOverridingInput.clone();
+        for (Map.Entry<KeyableItemStack, String> entry : this.overriddenRecipes.entrySet()) {
+            copy.overriddenRecipes.put(
+                new KeyableItemStack(entry.getKey().stack.clone()), entry.getValue()
+            );
+        }
+        copy.runningRecipe = this.runningRecipe;
+        copy.experience = this.experience;
+        return copy;
+    }
+
+    private static void copyStacks(
+        Iterable<ItemStack> source, ArrayList<ItemStack> target
+    ) {
+        for (ItemStack stack : source) {
+            target.add(ItemCompat.isEmpty(stack) ? ItemCompat.empty() : stack.clone());
+        }
     }
 
     public boolean hasAny() {

@@ -66,4 +66,26 @@ public class ConfigTest {
         assertEquals("Localized Oven", mapped.getGuiTitle().get(FurnaceType.FURNACE));
         assertEquals("Smoker", mapped.getGuiTitle().get(FurnaceType.SMOKER));
     }
+
+    @Test
+    public void writerRefusesToOverwriteMalformedExistingConfig() throws Exception {
+        Path file = tempDir.resolve("broken.json");
+        byte[] original = "{broken".getBytes("UTF-8");
+        Files.write(file, original);
+
+        assertThrows(Exception.class, () ->
+            FureamWorldConfigImpl.writeWorldConfig(new FureamWorldConfigImpl(), file.toFile())
+        );
+        assertArrayEquals(original, Files.readAllBytes(file));
+    }
+
+    @Test
+    public void oversizedLaneCountIsRejected() throws Exception {
+        Path file = tempDir.resolve("oversized.json");
+        Files.write(file, "{\"input_slot_count\":{\"FURNACE\":577}}".getBytes("UTF-8"));
+
+        assertThrows(Exception.class, () ->
+            FureamWorldConfigImpl.readWorldConfig(new FureamWorldConfigImpl(), file.toFile())
+        );
+    }
 }

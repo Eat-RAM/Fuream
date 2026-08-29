@@ -1,6 +1,5 @@
 package io.github.eat_ram.fuream.compat;
 
-import java.lang.reflect.Method;
 import java.util.Locale;
 
 import org.bukkit.Material;
@@ -13,13 +12,8 @@ public final class ItemCompat {
 
     public static boolean isAir(Material material) {
         if (material == null) return true;
-        try {
-            Method method = Material.class.getMethod("isAir");
-            return Boolean.TRUE.equals(method.invoke(material));
-        } catch (ReflectiveOperationException ignored) {
-            String name = material.name();
-            return "AIR".equals(name) || name.endsWith("_AIR");
-        }
+        String name = material.name();
+        return "AIR".equals(name) || name.endsWith("_AIR");
     }
 
     public static ItemStack empty() {
@@ -43,6 +37,5 @@ public final class ItemCompat {
     }
 
     private ItemCompat() {
-        throw new UnsupportedOperationException();
     }
 }

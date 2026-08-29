@@ -17,6 +17,8 @@ public final class NativeNbtCompound {
     private static final Map<Class<?>, Field> MAP_FIELDS = new ConcurrentHashMap<>();
     private static final Map<String, Method> SETTERS = new ConcurrentHashMap<>();
     private static final Map<Class<?>, Class<?>> LIST_CLASSES = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Field> PRIMITIVE_FIELDS = new ConcurrentHashMap<>();
+    private static volatile Class<?> serverCompoundClass;
 
     private final Object raw;
 
@@ -40,6 +42,8 @@ public final class NativeNbtCompound {
     }
 
     public static NativeNbtCompound createForServer() {
+        Class<?> cached = serverCompoundClass;
+        if (cached != null) return create(cached);
         ClassLoader loader = Bukkit.getServer().getClass().getClassLoader();
         String craftPackage = Bukkit.getServer().getClass().getPackage().getName();
         String version = craftPackage.substring(craftPackage.lastIndexOf('.') + 1);
@@ -50,7 +54,9 @@ public final class NativeNbtCompound {
         };
         for (String candidate : candidates) {
             try {
-                return create(Class.forName(candidate, false, loader));
+                Class<?> located = Class.forName(candidate, false, loader);
+                serverCompoundClass = located;
+                return create(located);
             } catch (ClassNotFoundException ignored) {
             }
         }
@@ -214,6 +220,13 @@ public final class NativeNbtCompound {
 
     private static Object primitiveValue(Object tag) {
         if (tag == null) return null;
+        Field cached = PRIMITIVE_FIELDS.get(tag.getClass());
+        if (cached != null) {
+            try {
+                return cached.get(tag);
+            } catch (IllegalAccessException ignored) {
+            }
+        }
         for (Class<?> current = tag.getClass(); current != null; current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
                 if (Modifier.isStatic(field.getModifiers())) continue;
@@ -221,6 +234,7 @@ public final class NativeNbtCompound {
                 if (type == String.class || type.isPrimitive() || Number.class.isAssignableFrom(type)) {
                     try {
                         field.setAccessible(true);
+                        PRIMITIVE_FIELDS.put(tag.getClass(), field);
                         return field.get(tag);
                     } catch (IllegalAccessException ignored) {
                     }

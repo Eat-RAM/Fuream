@@ -1,7 +1,17 @@
 package io.github.eat_ram.fuream;
 
 import java.io.FileNotFoundException;
-import java.io.FileReader;
+import java.io.BufferedReader;
+import java.io.BufferedWriter;
+import java.io.InputStreamReader;
+import java.io.OutputStreamWriter;
+import java.io.FileInputStream;
+import java.io.FileOutputStream;
+import java.nio.charset.StandardCharsets;
+import java.nio.file.AtomicMoveNotSupportedException;
+import java.nio.file.Files;
+import java.nio.file.Path;
+import java.nio.file.StandardCopyOption;
 import java.util.EnumMap;
 import java.util.EnumSet;
 import java.util.Map;
@@ -78,19 +88,41 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         putMap(root, "gui_next_page_item_tooltip", config.getGuiNextPageItemTooltip());
 
         com.google.gson.Gson gson = new com.google.gson.GsonBuilder().setPrettyPrinting().create();
-        try (java.io.FileWriter fw = new java.io.FileWriter(configFile)) {
-            gson.toJson(root, fw);
+        Path target = configFile.toPath().toAbsolutePath();
+        Path parent = target.getParent();
+        if (parent == null) throw new java.io.IOException("Config has no parent directory: " + target);
+        Path temporary = Files.createTempFile(parent, configFile.getName(), ".tmp");
+        try {
+            try (BufferedWriter writer = new BufferedWriter(new OutputStreamWriter(
+                new FileOutputStream(temporary.toFile()), StandardCharsets.UTF_8
+            ))) {
+                gson.toJson(root, writer);
+            }
+            try {
+                Files.move(temporary, target, StandardCopyOption.ATOMIC_MOVE, StandardCopyOption.REPLACE_EXISTING);
+            } catch (AtomicMoveNotSupportedException ignored) {
+                Files.move(temporary, target, StandardCopyOption.REPLACE_EXISTING);
+            }
+        } finally {
+            Files.deleteIfExists(temporary);
         }
     }
 
-    private static JsonObject readExistingObject(File file) {
+    private static JsonObject readExistingObject(File file) throws java.io.IOException {
         if (!file.isFile()) return new JsonObject();
-        try (FileReader reader = new FileReader(file)) {
+        try (BufferedReader reader = utf8Reader(file)) {
             JsonElement element = new JsonParser().parse(reader);
-            return element.isJsonObject() ? element.getAsJsonObject() : new JsonObject();
-        } catch (Exception ignored) {
-            return new JsonObject();
+            if (!element.isJsonObject()) {
+                throw new JsonSyntaxException("Config root must be a JSON object: " + file);
+            }
+            return element.getAsJsonObject();
         }
+    }
+
+    private static BufferedReader utf8Reader(File file) throws FileNotFoundException {
+        return new BufferedReader(new InputStreamReader(
+            new FileInputStream(file), StandardCharsets.UTF_8
+        ));
     }
 
     private static void putMap(JsonObject root, String key, Map<FurnaceType, ?> values) {
@@ -124,885 +156,117 @@ public class FureamWorldConfigImpl implements FureamWorldConfig {
         }
     }
 
-    @SuppressWarnings("deprecation")
     public static void readWorldConfig(
         @NotNull FureamWorldConfig config, @NotNull File configFile
     ) throws FileNotFoundException, JsonIOException, JsonSyntaxException {
-        final JsonElement JSON;
-        try (final FileReader FR = new FileReader(configFile)) {
-            JSON = new JsonParser().parse(FR);
+        final JsonElement json;
+        try (BufferedReader reader = utf8Reader(configFile)) {
+            json = new JsonParser().parse(reader);
         } catch (FileNotFoundException e) {
             throw e;
         } catch (java.io.IOException e) {
             throw new JsonIOException(e);
         }
-        if (JSON.isJsonObject()) {
-            JsonObject obj = JSON.getAsJsonObject();
-            readStringMap(obj, "gui_title", config.getGuiTitle());
-            if (obj.has("input_slot_count")) {
-                JsonElement ele = obj.get("input_slot_count");
-                if (ele.isJsonObject()) {
-                    EnumMap<FurnaceType, Integer> inputSlotCount =
-                    config.getInputSlotCount();
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                int count = value.getAsInt();
-                                if (count > 0) {
-                                    inputSlotCount.put(
-                                        FurnaceType.valueOf(i.getKey()), count
-                                    );
-                                }
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
+        if (!json.isJsonObject()) throw new JsonSyntaxException("Config root must be a JSON object");
+        JsonObject root = json.getAsJsonObject();
+
+        readIntMap(root, "input_slot_count", config.getInputSlotCount());
+        readIntMap(root, "fuel_slot_count", config.getFuelSlotCount());
+        readIntMap(root, "output_slot_count", config.getOutputSlotCount());
+        readTypeSet(root, "enabled_furnace_types", config.getEnabledFurnaceTypes());
+        readTypeSet(root, "prevents_hopper_insert_non_smeltable", config.getPreventsHopperInsertNonSmeltable());
+
+        readStringMaps(root,
+            field("gui_border_item_id", config.getGuiBorderItemId()),
+            field("gui_fuel_left_item_id", config.getGuiFuelLeftItemId()),
+            field("gui_fuel_used_item_id", config.getGuiFuelUsedItemId()),
+            field("gui_progress_done_item_id", config.getGuiProgressDoneItemId()),
+            field("gui_progress_remaining_item_id", config.getGuiProgressRemainingItemId()),
+            field("gui_prev_recipe_item_id", config.getGuiPrevRecipeItemId()),
+            field("gui_next_recipe_item_id", config.getGuiNextRecipeItemId()),
+            field("gui_xp_indicator_item_id", config.getGuiXpIndicatorItemId()),
+            field("gui_next_functional_area_item_id", config.getGuiNextFunctionalAreaItemId()),
+            field("gui_prev_page_item_id", config.getGuiPrevPageItemId()),
+            field("gui_next_page_item_id", config.getGuiNextPageItemId()),
+            field("gui_title", config.getGuiTitle()),
+            field("gui_border_item_title", config.getGuiBorderItemTitle()),
+            field("gui_fuel_item_title", config.getGuiFuelItemTitle()),
+            field("gui_fuel_item_tooltip", config.getGuiFuelItemTooltip()),
+            field("gui_progress_item_title", config.getGuiProgressItemTitle()),
+            field("gui_progress_item_tooltip", config.getGuiProgressItemTooltip()),
+            field("gui_prev_recipe_item_title", config.getGuiPrevRecipeItemTitle()),
+            field("gui_prev_recipe_empty_item_tooltip", config.getGuiPrevRecipeEmptyItemTooltip()),
+            field("gui_prev_recipe_arbitrary_item_tooltip", config.getGuiPrevRecipeArbitraryItemTooltip()),
+            field("gui_prev_recipe_item_tooltip", config.getGuiPrevRecipeItemTooltip()),
+            field("gui_next_recipe_item_title", config.getGuiNextRecipeItemTitle()),
+            field("gui_next_recipe_empty_item_tooltip", config.getGuiNextRecipeEmptyItemTooltip()),
+            field("gui_next_recipe_arbitrary_item_tooltip", config.getGuiNextRecipeArbitraryItemTooltip()),
+            field("gui_next_recipe_item_tooltip", config.getGuiNextRecipeItemTooltip()),
+            field("gui_xp_indicator_item_title", config.getGuiXpIndicatorItemTitle()),
+            field("gui_xp_indicator_gainable_item_title", config.getGuiXpIndicatorGainableItemTitle()),
+            field("gui_xp_indicator_item_tooltip", config.getGuiXpIndicatorItemTooltip()),
+            field("gui_next_functional_area_item_title", config.getGuiNextFunctionalAreaItemTitle()),
+            field("gui_prev_page_item_title", config.getGuiPrevPageItemTitle()),
+            field("gui_prev_page_item_tooltip", config.getGuiPrevPageItemTooltip()),
+            field("gui_next_page_item_title", config.getGuiNextPageItemTitle()),
+            field("gui_next_page_item_tooltip", config.getGuiNextPageItemTooltip())
+        );
+    }
+
+    private static void readIntMap(
+        JsonObject root, String key, EnumMap<FurnaceType, Integer> target
+    ) {
+        if (!root.has(key)) return;
+        JsonElement element = root.get(key);
+        if (!element.isJsonObject()) throw new JsonSyntaxException(key + " must be an object");
+        for (Map.Entry<String, JsonElement> entry : element.getAsJsonObject().entrySet()) {
+            try {
+                FurnaceType type = FurnaceType.valueOf(entry.getKey());
+                int count = entry.getValue().getAsInt();
+                if (count < 1 || count > 576) {
+                    throw new JsonSyntaxException(key + '.' + entry.getKey() + " must be in 1..576");
                 }
+                target.put(type, count);
+            } catch (IllegalArgumentException ignored) {
+                if (isFurnaceType(entry.getKey())) throw ignored;
             }
-            if (obj.has("fuel_slot_count")) {
-                JsonElement ele = obj.get("fuel_slot_count");
-                if (ele.isJsonObject()) {
-                    EnumMap<FurnaceType, Integer> fuelSlotCount =
-                    config.getFuelSlotCount();
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                int count = value.getAsInt();
-                                if (count > 0) {
-                                    fuelSlotCount.put(
-                                        FurnaceType.valueOf(i.getKey()), count
-                                    );
-                                }
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                }
+        }
+    }
+
+    private static void readTypeSet(JsonObject root, String key, EnumSet<FurnaceType> target) {
+        if (!root.has(key)) return;
+        JsonElement element = root.get(key);
+        if (!element.isJsonArray()) throw new JsonSyntaxException(key + " must be an array");
+        target.clear();
+        for (JsonElement value : element.getAsJsonArray()) {
+            if (!value.isJsonPrimitive()) continue;
+            try {
+                target.add(FurnaceType.valueOf(value.getAsString()));
+            } catch (IllegalArgumentException ignored) {
             }
-            if (obj.has("output_slot_count")) {
-                JsonElement ele = obj.get("output_slot_count");
-                if (ele.isJsonObject()) {
-                    EnumMap<FurnaceType, Integer> outputSlotCount =
-                    config.getOutputSlotCount();
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                int count = value.getAsInt();
-                                if (count > 0) {
-                                    outputSlotCount.put(
-                                        FurnaceType.valueOf(i.getKey()), count
-                                    );
-                                }
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                }
-            }
-            if (obj.has("prevents_hopper_insert_non_smeltable")) {
-                JsonElement ele =
-                obj.get("prevents_hopper_insert_non_smeltable");
-                if (ele.isJsonArray()) {
-                    EnumSet<FurnaceType> preventsHopperInsertNonSmeltable =
-                    config.getPreventsHopperInsertNonSmeltable();
-                    for (JsonElement i : ele.getAsJsonArray()) {
-                        if (i.isJsonPrimitive()) {
-                            try {
-                                preventsHopperInsertNonSmeltable
-                                .add(FurnaceType.valueOf(i.getAsString()));
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                }
-            }
-            if (obj.has("enabled_furnace_types")) {
-                JsonElement ele = obj.get("enabled_furnace_types");
-                if (ele.isJsonArray()) {
-                    EnumSet<FurnaceType> enabledFurnaceTypes =
-                    config.getEnabledFurnaceTypes();
-                    for (JsonElement i : ele.getAsJsonArray()) {
-                        if (i.isJsonPrimitive()) {
-                            try {
-                                enabledFurnaceTypes
-                                .add(FurnaceType.valueOf(i.getAsString()));
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                }
-            }
-            // Below are generated by a Python script
-            if (obj.has("gui_border_item_id")) {
-                JsonElement ele = obj.get("gui_border_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiBorderItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_fuel_left_item_id")) {
-                JsonElement ele = obj.get("gui_fuel_left_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiFuelLeftItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_fuel_used_item_id")) {
-                JsonElement ele = obj.get("gui_fuel_used_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiFuelUsedItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_progress_done_item_id")) {
-                JsonElement ele = obj.get("gui_progress_done_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiProgressDoneItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_progress_remaining_item_id")) {
-                JsonElement ele = obj.get("gui_progress_remaining_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiProgressRemainingItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_recipe_item_id")) {
-                JsonElement ele = obj.get("gui_prev_recipe_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevRecipeItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_recipe_item_id")) {
-                JsonElement ele = obj.get("gui_next_recipe_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextRecipeItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_xp_indicator_item_id")) {
-                JsonElement ele = obj.get("gui_xp_indicator_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiXpIndicatorItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_functional_area_item_id")) {
-                JsonElement ele = obj.get("gui_next_functional_area_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextFunctionalAreaItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_page_item_id")) {
-                JsonElement ele = obj.get("gui_prev_page_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevPageItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_page_item_id")) {
-                JsonElement ele = obj.get("gui_next_page_item_id");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextPageItemId();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_border_item_title")) {
-                JsonElement ele = obj.get("gui_border_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiBorderItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_fuel_item_title")) {
-                JsonElement ele = obj.get("gui_fuel_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiFuelItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_fuel_item_tooltip")) {
-                JsonElement ele = obj.get("gui_fuel_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiFuelItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_progress_item_title")) {
-                JsonElement ele = obj.get("gui_progress_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiProgressItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_progress_item_tooltip")) {
-                JsonElement ele = obj.get("gui_progress_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiProgressItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_recipe_item_title")) {
-                JsonElement ele = obj.get("gui_prev_recipe_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevRecipeItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_recipe_empty_item_tooltip")) {
-                JsonElement ele = obj.get("gui_prev_recipe_empty_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevRecipeEmptyItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_recipe_arbitrary_item_tooltip")) {
-                JsonElement ele = obj.get("gui_prev_recipe_arbitrary_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevRecipeArbitraryItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_recipe_item_tooltip")) {
-                JsonElement ele = obj.get("gui_prev_recipe_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevRecipeItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_recipe_item_title")) {
-                JsonElement ele = obj.get("gui_next_recipe_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextRecipeItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_recipe_empty_item_tooltip")) {
-                JsonElement ele = obj.get("gui_next_recipe_empty_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextRecipeEmptyItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_recipe_arbitrary_item_tooltip")) {
-                JsonElement ele = obj.get("gui_next_recipe_arbitrary_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextRecipeArbitraryItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_recipe_item_tooltip")) {
-                JsonElement ele = obj.get("gui_next_recipe_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextRecipeItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_xp_indicator_item_title")) {
-                JsonElement ele = obj.get("gui_xp_indicator_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiXpIndicatorItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_xp_indicator_gainable_item_title")) {
-                JsonElement ele = obj.get("gui_xp_indicator_gainable_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiXpIndicatorGainableItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_xp_indicator_item_tooltip")) {
-                JsonElement ele = obj.get("gui_xp_indicator_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiXpIndicatorItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_functional_area_item_title")) {
-                JsonElement ele =
-                obj.get("gui_next_functional_area_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextFunctionalAreaItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_page_item_title")) {
-                JsonElement ele = obj.get("gui_prev_page_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevPageItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_prev_page_item_tooltip")) {
-                JsonElement ele = obj.get("gui_prev_page_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiPrevPageItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_page_item_title")) {
-                JsonElement ele = obj.get("gui_next_page_item_title");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextPageItemTitle();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
-            if (obj.has("gui_next_page_item_tooltip")) {
-                JsonElement ele = obj.get("gui_next_page_item_tooltip");
-                EnumMap<FurnaceType, String> ids =
-                config.getGuiNextPageItemTooltip();
-                if (ele.isJsonObject()) {
-                    for (Map.Entry<String, JsonElement> i :
-                        ele.getAsJsonObject().entrySet()) {
-                        JsonElement value = i.getValue();
-                        if (value.isJsonPrimitive()) {
-                            try {
-                                ids.put(
-                                    FurnaceType.valueOf(i.getKey()),
-                                    value.getAsString()
-                                );
-                            } catch (IllegalArgumentException ignored) {}
-                        }
-                    }
-                } else if (ele.isJsonPrimitive()) {
-                    String id = ele.getAsString();
-                    for (FurnaceType type : FurnaceType.values()) {
-                        ids.put(type, id);
-                    }
-                }
-            }
+        }
+    }
+
+    private static boolean isFurnaceType(String value) {
+        for (FurnaceType type : FurnaceType.values()) if (type.name().equals(value)) return true;
+        return false;
+    }
+
+    private static StringMapField field(String key, EnumMap<FurnaceType, String> target) {
+        return new StringMapField(key, target);
+    }
+
+    private static void readStringMaps(JsonObject root, StringMapField... fields) {
+        for (StringMapField field : fields) readStringMap(root, field.key, field.target);
+    }
+
+    private static final class StringMapField {
+        private final String key;
+        private final EnumMap<FurnaceType, String> target;
+
+        private StringMapField(String key, EnumMap<FurnaceType, String> target) {
+            this.key = key;
+            this.target = target;
         }
     }
 

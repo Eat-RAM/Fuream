@@ -1,10 +1,5 @@
 package io.github.eat_ram.fuream.hook;
 
-import java.util.Iterator;
-import java.util.Map;
-
-import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
-import io.github.eat_ram.fuream.util.FurnacePos;
 import org.bukkit.Chunk;
 import org.bukkit.block.Block;
 import org.bukkit.block.BlockState;
@@ -28,23 +23,7 @@ public class ChunkListener implements Listener {
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onChunkUnload(ChunkUnloadEvent event) {
-        Chunk chunk = event.getChunk();
-        String worldName = chunk.getWorld().getName();
-        int cx = chunk.getX();
-        int cz = chunk.getZ();
-
-        for (Iterator<Map.Entry<FurnacePos, FurnaceContext>> it = FurnaceManager.CONTEXTS.entrySet().iterator(); it.hasNext(); ) {
-            Map.Entry<FurnacePos, FurnaceContext> entry = it.next();
-            FurnacePos pos = entry.getKey();
-            if (pos.worldName.equals(worldName) && (pos.x >> 4) == cx && (pos.z >> 4) == cz) {
-                FurnaceContext ctx = entry.getValue();
-                FurnaceManager.closeSessions(ctx);
-                if (ctx.dirty || ctx.data.hasAny()) {
-                    FurnaceManager.saveToNbt(ctx);
-                }
-                it.remove();
-            }
-        }
+        FurnaceManager.unloadChunk(event.getChunk());
     }
 
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)

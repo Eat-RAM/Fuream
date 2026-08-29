@@ -10,6 +10,9 @@ import org.bukkit.event.block.BlockExplodeEvent;
 public final class BlockExplodeListener implements Listener {
     @EventHandler(priority = EventPriority.MONITOR, ignoreCancelled = true)
     public void onBlockExplode(BlockExplodeEvent event) {
-        for (Block block : event.blockList()) BlockBreakListener.handleFurnaceBreak(block);
+        boolean dropItems = event.getYield() > 0f;
+        for (Block block : event.blockList()) {
+            BlockBreakListener.handleFurnaceBreak(block, dropItems);
+        }
     }
 }

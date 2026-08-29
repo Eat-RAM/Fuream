@@ -11,7 +11,7 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.Nullable;
 import io.github.eat_ram.fuream.compat.ItemCompat;
 
-public abstract class FuelTable {
+public final class FuelTable {
     private static final Map<Material, Integer> FUEL_TIMES = new EnumMap<>(Material.class);
 
     static {
@@ -23,19 +23,6 @@ public abstract class FuelTable {
         try {
             Class<?> furnaceClass = getFurnaceNmsClass();
             if (furnaceClass == null) return;
-
-            Method getFuelMethod = null;
-            for (Method m : furnaceClass.getDeclaredMethods()) {
-                if (Modifier.isStatic(m.getModifiers()) && Map.class.isAssignableFrom(m.getReturnType()) && m.getParameterCount() == 0) {
-                    getFuelMethod = m;
-                    break;
-                }
-            }
-            if (getFuelMethod == null) return;
-
-            getFuelMethod.setAccessible(true);
-            Map<?, Integer> nmsFuelMap = (Map<?, Integer>) getFuelMethod.invoke(null);
-            if (nmsFuelMap == null || nmsFuelMap.isEmpty()) return;
 
             Class<?> craftMagicClass = getCraftMagicNumbersClass();
             if (craftMagicClass == null) return;
@@ -49,17 +36,39 @@ public abstract class FuelTable {
             }
             if (getMaterialMethod == null) return;
 
-            for (Map.Entry<?, Integer> entry : nmsFuelMap.entrySet()) {
-                if (entry.getKey() != null && entry.getValue() != null && entry.getValue() > 0) {
-                    Material mat = (Material) getMaterialMethod.invoke(null, entry.getKey());
-                    if (mat != null) {
-                        FUEL_TIMES.put(mat, entry.getValue());
-                    }
+            Map<Material, Integer> best = new EnumMap<>(Material.class);
+            for (Method candidate : furnaceClass.getDeclaredMethods()) {
+                if (!Modifier.isStatic(candidate.getModifiers()) || candidate.getParameterCount() != 0 ||
+                    !Map.class.isAssignableFrom(candidate.getReturnType())) continue;
+                try {
+                    candidate.setAccessible(true);
+                    Object value = candidate.invoke(null);
+                    if (!(value instanceof Map)) continue;
+                    Map<Material, Integer> converted = convertFuelMap((Map<?, ?>) value, getMaterialMethod);
+                    if (converted.size() > best.size()) best = converted;
+                } catch (Throwable ignored) {
+                    // One inaccessible or unrelated map must not hide later candidates.
                 }
             }
+            if (!best.isEmpty()) FUEL_TIMES.putAll(best);
         } catch (Throwable ignored) {
             // Graceful fallback to default vanilla table
         }
+    }
+
+    private static Map<Material, Integer> convertFuelMap(Map<?, ?> source, Method getMaterialMethod) {
+        Map<Material, Integer> converted = new EnumMap<>(Material.class);
+        for (Map.Entry<?, ?> entry : source.entrySet()) {
+            if (!(entry.getValue() instanceof Number) || entry.getKey() == null) continue;
+            int ticks = ((Number) entry.getValue()).intValue();
+            if (ticks <= 0 || !getMaterialMethod.getParameterTypes()[0].isInstance(entry.getKey())) continue;
+            try {
+                Object material = getMaterialMethod.invoke(null, entry.getKey());
+                if (material instanceof Material) converted.put((Material) material, ticks);
+            } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
+            }
+        }
+        return converted;
     }
 
     private static @Nullable Class<?> getFurnaceNmsClass() {
@@ -82,14 +91,7 @@ public abstract class FuelTable {
         String serverPkg = Bukkit.getServer() != null ? Bukkit.getServer().getClass().getPackage().getName() : "";
         String[] candidates = {
             serverPkg + ".util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_20_R1.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_20_R2.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_20_R3.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_19_R3.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_18_R2.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_17_R1.util.CraftMagicNumbers",
-            "org.bukkit.craftbukkit.v1_16_R3.util.CraftMagicNumbers"
+            "org.bukkit.craftbukkit.util.CraftMagicNumbers"
         };
         for (String c : candidates) {
             try {
@@ -257,6 +259,5 @@ public abstract class FuelTable {
     }
 
     private FuelTable() {
-        throw new UnsupportedOperationException();
     }
 }

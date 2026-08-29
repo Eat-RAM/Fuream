@@ -13,6 +13,7 @@ import org.bukkit.event.EventPriority;
 import org.bukkit.event.Listener;
 import org.bukkit.event.block.Action;
 import org.bukkit.event.player.PlayerInteractEvent;
+import java.lang.reflect.InvocationTargetException;
 
 public class FurnaceOpenListener implements Listener {
     @EventHandler(priority = EventPriority.HIGHEST, ignoreCancelled = true)
@@ -20,6 +21,7 @@ public class FurnaceOpenListener implements Listener {
         if (event.getAction() != Action.RIGHT_CLICK_BLOCK) {
             return;
         }
+        if (isOffHand(event) || isBlockUseDenied(event)) return;
 
         Block block = event.getClickedBlock();
         if (block == null) return;
@@ -38,10 +40,12 @@ public class FurnaceOpenListener implements Listener {
         }
         if (!canOpenLocked(block, player)) return;
 
-        event.setCancelled(true);
-
         FurnaceContext ctx = FurnaceManager.getOrCreateContext(block);
         if (ctx == null) return;
+        ctx = FurnaceManager.prepareForInteraction(ctx.pos);
+        if (ctx == null) return;
+
+        event.setCancelled(true);
 
         FureamScreenInventory session = new FureamScreenInventory(
             player.getUniqueId(), block.getLocation(), type, ctx.data, config
@@ -53,6 +57,7 @@ public class FurnaceOpenListener implements Listener {
         session.cookTimeTotal = Math.max(1, ctx.cookTimeTotal);
         session.refreshVisuals();
         player.openInventory(session.bukkitInventory);
+        FurnaceManager.finishInteraction(ctx);
     }
 
     private static boolean canOpenLocked(Block block, Player player) {
@@ -65,8 +70,28 @@ public class FurnaceOpenListener implements Listener {
             org.bukkit.inventory.ItemStack held = player.getItemInHand();
             return !ItemCompat.isEmpty(held) && held.hasItemMeta() &&
                 held.getItemMeta().hasDisplayName() && lock.equals(held.getItemMeta().getDisplayName());
-        } catch (ReflectiveOperationException ignored) {
+        } catch (NoSuchMethodException ignored) {
             return true;
+        } catch (InvocationTargetException | IllegalAccessException | RuntimeException failure) {
+            return false;
+        }
+    }
+
+    private static boolean isOffHand(PlayerInteractEvent event) {
+        try {
+            Object hand = event.getClass().getMethod("getHand").invoke(event);
+            return hand instanceof Enum && "OFF_HAND".equals(((Enum<?>) hand).name());
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            return false;
+        }
+    }
+
+    private static boolean isBlockUseDenied(PlayerInteractEvent event) {
+        try {
+            Object result = event.getClass().getMethod("useInteractedBlock").invoke(event);
+            return result instanceof Enum && "DENY".equals(((Enum<?>) result).name());
+        } catch (ReflectiveOperationException | LinkageError ignored) {
+            return false;
         }
     }
 }

@@ -1,12 +1,17 @@
 package io.github.eat_ram.fuream.screen;
 
 import java.util.ArrayList;
+import java.util.HashSet;
+import java.util.IllegalFormatException;
 import java.util.List;
+import java.util.Set;
 import java.util.function.BiFunction;
 import java.util.UUID;
 
 import io.github.eat_ram.fuream.api.FureamWorldConfig;
 import io.github.eat_ram.fuream.api.FurnaceType;
+import io.github.eat_ram.fuream.FureamMain;
+import io.github.eat_ram.fuream.ResolvedFurnaceConfig;
 import io.github.eat_ram.fuream.data.FureamFurnaceData;
 import io.github.eat_ram.fuream.hook.FurnaceManager;
 import io.github.eat_ram.fuream.hook.FurnaceManager.FurnaceContext;
@@ -38,9 +43,19 @@ import org.jetbrains.annotations.Range;
  * 45..53  functional area & decor (row 6)
  * </pre>
  */
-public class FureamScreenInventory implements InventoryHolder {
+public final class FureamScreenInventory implements InventoryHolder {
     public static final int COLS = 9;
     public static final int SIZE = 54;
+    public static final int INPUT_START = 0;
+    public static final int FUEL_BAR_START = 9;
+    public static final int FUEL_START = 18;
+    public static final int PROGRESS_BAR_START = 27;
+    public static final int OUTPUT_START = 36;
+    public static final int FUNCTIONAL_START = 45;
+    public static final int NEXT_FUNCTIONAL_SLOT = 51;
+    public static final int PREVIOUS_PAGE_SLOT = 52;
+    public static final int NEXT_PAGE_SLOT = 53;
+    private static final Set<String> WARNED_FORMATS = new HashSet<>();
     public static final ArrayList<@NotNull BiFunction<
         ? super FureamScreenInventory, ? super FureamWorldConfig,
         ? extends @NotNull FureamFunctionalArea
@@ -79,6 +94,8 @@ public class FureamScreenInventory implements InventoryHolder {
     public @NotNull ItemStack nextPageBtn = new ItemStack(Material.AIR);
     private @Range(from = 0, to = Integer.MAX_VALUE) int page;
     public final @NotNull Inventory bukkitInventory;
+    private int visualTick;
+    private boolean forceBarRefresh = true;
 
     public FureamScreenInventory(
         @NotNull UUID viewerId, @NotNull Location location, @NotNull FurnaceType type,
@@ -91,13 +108,11 @@ public class FureamScreenInventory implements InventoryHolder {
         this.config = config;
         this.functionalAreas = new ArrayList<>();
 
-        int inputSlotCount = config != null ? config.getInputSlotCount().get(type) : 9;
-        int fuelSlotCount = config != null ? config.getFuelSlotCount().get(type) : 9;
-        int outputSlotCount = config != null ? config.getOutputSlotCount().get(type) : 9;
-
-        this.inputSlots = Math.max(1, inputSlotCount);
-        this.fuelSlots = Math.max(1, fuelSlotCount);
-        this.outputSlots = Math.max(1, outputSlotCount);
+        ResolvedFurnaceConfig resolved = config == null
+            ? null : ResolvedFurnaceConfig.resolve(config, type);
+        this.inputSlots = resolved == null ? 9 : resolved.inputSlots;
+        this.fuelSlots = resolved == null ? 9 : resolved.fuelSlots;
+        this.outputSlots = resolved == null ? 9 : resolved.outputSlots;
 
         this.fuelLeftItem = parseMaterial(config != null ? config.getGuiFuelLeftItemId().get(type) : null, Material.GLASS_PANE);
         this.fuelUsedItem = parseMaterial(config != null ? config.getGuiFuelUsedItemId().get(type) : null, Material.GLASS_PANE);
@@ -114,11 +129,11 @@ public class FureamScreenInventory implements InventoryHolder {
         );
 
         String title = resolveTitle(location, type, config);
-        this.bukkitInventory = Bukkit.createInventory(this, 54, title.length() > 32 ? title.substring(0, 32) : title);
+        this.bukkitInventory = Bukkit.createInventory(this, SIZE, title.length() > 32 ? title.substring(0, 32) : title);
         this.handler = new FureamScreenHandler(this);
 
         FurnacePos pos = new FurnacePos(this.location);
-        FurnaceContext ctx = FurnaceManager.CONTEXTS.get(pos);
+        FurnaceContext ctx = FurnaceManager.getContext(pos);
         if (ctx != null) {
             this.burnTime = ctx.burnTime;
             this.fuelTimeTotal = Math.max(1, ctx.fuelTimeTotal);
@@ -126,7 +141,7 @@ public class FureamScreenInventory implements InventoryHolder {
             this.cookTimeTotal = Math.max(1, ctx.cookTimeTotal);
         } else {
             this.cookTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
-            this.fuelTimeTotal = (type == FurnaceType.FURNACE ? 200 : 100);
+            this.fuelTimeTotal = 200;
         }
         this.switchPage(0);
         for (BiFunction<
@@ -171,29 +186,22 @@ public class FureamScreenInventory implements InventoryHolder {
         return this.bukkitInventory;
     }
 
-    public int computeCookTimeTotal() {
-        FurnacePos pos = new FurnacePos(this.location);
-        FurnaceContext ctx = FurnaceManager.CONTEXTS.get(pos);
-        if (ctx != null) {
-            return Math.max(1, ctx.cookTimeTotal);
-        }
-        return this.furnaceType == FurnaceType.FURNACE ? 200 : 100;
-    }
-
     public boolean isInputSlot(int slot) {
-        return slot >= 0 && slot < 9 && this.page * 9 + slot < this.inputSlots;
+        return slot >= INPUT_START && slot < FUEL_BAR_START && this.page * COLS + slot < this.inputSlots;
     }
 
     public boolean isFuelRowSlot(int slot) {
-        return slot >= 18 && slot < 27 && this.page * 9 + slot - 18 < this.fuelSlots;
+        return slot >= FUEL_START && slot < PROGRESS_BAR_START &&
+            this.page * COLS + slot - FUEL_START < this.fuelSlots;
     }
 
     public boolean isOutputSlot(int slot) {
-        return slot >= 36 && slot < 45 && this.page * 9 + slot - 36 < this.outputSlots;
+        return slot >= OUTPUT_START && slot < FUNCTIONAL_START &&
+            this.page * COLS + slot - OUTPUT_START < this.outputSlots;
     }
 
     public boolean isFunctionalAreaSlot(int slot) {
-        return slot >= 45 && slot < 51;
+        return slot >= FUNCTIONAL_START && slot < NEXT_FUNCTIONAL_SLOT;
     }
 
     public boolean isBarOrDecorSlot(int slot) {
@@ -202,36 +210,41 @@ public class FureamScreenInventory implements InventoryHolder {
     }
 
     public int getInputSlotStop() {
-        int diff = this.inputSlots - (this.page * 9);
-        return diff >= 9 ? 9 : (diff <= 0 ? 0 : diff);
+        int diff = this.inputSlots - (this.page * COLS);
+        return diff >= COLS ? COLS : (diff <= 0 ? 0 : diff);
     }
 
     public int getFuelSlotStop() {
-        int diff = this.fuelSlots - (this.page * 9);
-        return diff >= 9 ? 27 : (diff <= 0 ? 18 : diff + 18);
+        int diff = this.fuelSlots - (this.page * COLS);
+        return diff >= COLS ? PROGRESS_BAR_START :
+            (diff <= 0 ? FUEL_START : diff + FUEL_START);
     }
 
     public int getOutputSlotStop() {
-        int diff = this.outputSlots - (this.page * 9);
-        return diff >= 9 ? 45 : (diff <= 0 ? 36 : diff + 36);
+        int diff = this.outputSlots - (this.page * COLS);
+        return diff >= COLS ? FUNCTIONAL_START :
+            (diff <= 0 ? OUTPUT_START : diff + OUTPUT_START);
     }
 
     public void refreshVisuals() {
-        this.cookTimeTotal = this.computeCookTimeTotal();
+        this.cookTimeTotal = Math.max(1, this.cookTimeTotal);
         if (this.cookTime >= this.cookTimeTotal) {
             this.cookTime = Math.max(0, this.cookTimeTotal - 1);
         }
 
-        int fuelCount = barCount(this.burnTime, this.fuelTimeTotal);
-        int progressCount = barCount(this.cookTime, this.cookTimeTotal);
-
-        for (int i = 0; i < COLS; ++i) {
-            this.fuelBar[i] = this.addFuelTooltip(new ItemStack(
-                i < fuelCount ? this.fuelLeftItem : this.fuelUsedItem, 1
-            ));
-            this.progBar[i] = this.addProgressTooltip(new ItemStack(
-                i < progressCount ? this.progressDoneItem : this.progressRemainingItem, 1
-            ));
+        boolean refreshBars = this.forceBarRefresh || (this.visualTick++ & 1) == 0;
+        if (refreshBars) {
+            int fuelCount = barCount(this.burnTime, this.fuelTimeTotal);
+            int progressCount = barCount(this.cookTime, this.cookTimeTotal);
+            for (int i = 0; i < COLS; ++i) {
+                this.fuelBar[i] = this.addFuelTooltip(new ItemStack(
+                    i < fuelCount ? this.fuelLeftItem : this.fuelUsedItem, 1
+                ));
+                this.progBar[i] = this.addProgressTooltip(new ItemStack(
+                    i < progressCount ? this.progressDoneItem : this.progressRemainingItem, 1
+                ));
+            }
+            this.forceBarRefresh = false;
         }
 
         for (FureamFunctionalArea area : this.functionalAreas) {
@@ -242,9 +255,12 @@ public class FureamScreenInventory implements InventoryHolder {
     }
 
     public void syncToBukkitInventory() {
-        for (int i = 0; i < 54; i++) {
+        for (int i = 0; i < SIZE; i++) {
             ItemStack stack = this.getStack(i);
-            this.bukkitInventory.setItem(i, stack);
+            ItemStack current = this.bukkitInventory.getItem(i);
+            if (!sameStack(current, stack)) {
+                this.bukkitInventory.setItem(i, ItemCompat.isEmpty(stack) ? null : stack.clone());
+            }
         }
     }
 
@@ -256,21 +272,22 @@ public class FureamScreenInventory implements InventoryHolder {
     @Contract(pure = true)
     public @Range(from = 0, to = Integer.MAX_VALUE) int getMaxPage() {
         int maxSlots = Math.max(this.inputSlots, Math.max(this.fuelSlots, this.outputSlots));
-        return Math.max(0, (maxSlots - 1) / 9);
+        return Math.max(0, (maxSlots - 1) / COLS);
     }
 
     public void switchPage(int page) {
         if (page >= 0 && page <= this.getMaxPage()) {
             this.page = page;
+            this.forceBarRefresh = true;
             this.prevPageBtn = makeTooltipItem(
                 new ItemStack(this.prevPageItem, 1),
                     this.config != null ? this.config.getGuiPrevPageItemTitle().get(this.furnaceType) : "Previous Page",
-                String.format(this.config != null ? this.config.getGuiPrevPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
+                safeFormat(this.config != null ? this.config.getGuiPrevPageItemTooltip().get(this.furnaceType) : "Page %d", "Page %d", page + 1)
             );
             this.nextPageBtn = makeTooltipItem(
                 new ItemStack(this.nextPageItem, 1),
                     this.config != null ? this.config.getGuiNextPageItemTitle().get(this.furnaceType) : "Next Page",
-                String.format(this.config != null ? this.config.getGuiNextPageItemTooltip().get(this.furnaceType) : "Page %d", page + 1)
+                safeFormat(this.config != null ? this.config.getGuiNextPageItemTooltip().get(this.furnaceType) : "Page %d", "Page %d", page + 1)
             );
             this.syncToBukkitInventory();
         }
@@ -295,18 +312,18 @@ public class FureamScreenInventory implements InventoryHolder {
 
     private @NotNull ItemStack addFuelTooltip(@NotNull ItemStack stack) {
         String title = this.config != null ? this.config.getGuiFuelItemTitle().get(this.furnaceType) : "Fuel";
-        String lore = String.format(
-                this.config != null ? this.config.getGuiFuelItemTooltip().get(this.furnaceType) : "Available: %d / %d",
-            this.burnTime, this.fuelTimeTotal
+        String lore = safeFormat(
+            this.config != null ? this.config.getGuiFuelItemTooltip().get(this.furnaceType) : "Available: %d / %d",
+            "Available: %d / %d", this.burnTime, this.fuelTimeTotal
         );
         return makeTooltipItem(stack, title, lore);
     }
 
     private @NotNull ItemStack addProgressTooltip(@NotNull ItemStack stack) {
         String title = this.config != null ? this.config.getGuiProgressItemTitle().get(this.furnaceType) : "Progress";
-        String lore = String.format(
-                this.config != null ? this.config.getGuiProgressItemTooltip().get(this.furnaceType) : "%d / %d",
-            this.cookTime, this.cookTimeTotal
+        String lore = safeFormat(
+            this.config != null ? this.config.getGuiProgressItemTooltip().get(this.furnaceType) : "%d / %d",
+            "%d / %d", this.cookTime, this.cookTimeTotal
         );
         return makeTooltipItem(stack, title, lore);
     }
@@ -334,59 +351,59 @@ public class FureamScreenInventory implements InventoryHolder {
 
     public @NotNull ItemStack getStack(int slot) {
         if (this.isInputSlot(slot)) {
-            int idx = this.page * 9 + slot;
-            return idx < this.data.inputs.size() ? this.data.inputs.get(idx) : new ItemStack(Material.AIR);
+            int idx = this.page * COLS + slot;
+            return cloneOrAir(idx < this.data.inputs.size() ? this.data.inputs.get(idx) : null);
         }
         if (this.isFuelRowSlot(slot)) {
-            int idx = this.page * 9 + slot - 18;
-            return idx < this.data.fuels.size() ? this.data.fuels.get(idx) : new ItemStack(Material.AIR);
+            int idx = this.page * COLS + slot - FUEL_START;
+            return cloneOrAir(idx < this.data.fuels.size() ? this.data.fuels.get(idx) : null);
         }
         if (this.isOutputSlot(slot)) {
-            int idx = this.page * 9 + slot - 36;
-            return idx < this.data.outputs.size() ? this.data.outputs.get(idx) : new ItemStack(Material.AIR);
+            int idx = this.page * COLS + slot - OUTPUT_START;
+            return cloneOrAir(idx < this.data.outputs.size() ? this.data.outputs.get(idx) : null);
         }
         if (this.isFunctionalAreaSlot(slot)) {
             int ca = this.getCurrentFunctionalArea();
-            return ca < this.functionalAreas.size() ?
-                this.functionalAreas.get(ca).getGuiStack(this, slot - 45) : this.border;
+            return cloneOrAir(ca < this.functionalAreas.size() ?
+                this.functionalAreas.get(ca).getGuiStack(this, slot - FUNCTIONAL_START) : this.border);
         }
-        if (slot >= 9 && slot < 18) {
-            return this.fuelBar[slot - 9];
+        if (slot >= FUEL_BAR_START && slot < FUEL_START) {
+            return cloneOrAir(this.fuelBar[slot - FUEL_BAR_START]);
         }
-        if (slot >= 27 && slot < 36) {
-            return this.progBar[slot - 27];
+        if (slot >= PROGRESS_BAR_START && slot < OUTPUT_START) {
+            return cloneOrAir(this.progBar[slot - PROGRESS_BAR_START]);
         }
-        if (slot == 51) return this.nextFunctionalBtn;
-        if (slot == 52) return this.prevPageBtn;
-        if (slot == 53) return this.nextPageBtn;
-        return this.border;
+        if (slot == NEXT_FUNCTIONAL_SLOT) return this.nextFunctionalBtn.clone();
+        if (slot == PREVIOUS_PAGE_SLOT) return this.prevPageBtn.clone();
+        if (slot == NEXT_PAGE_SLOT) return this.nextPageBtn.clone();
+        return this.border.clone();
     }
 
     public void setStack(int slot, @NotNull ItemStack stack) {
         if (this.isInputSlot(slot)) {
-            int idx = this.page * 9 + slot;
+            int idx = this.page * COLS + slot;
             while (this.data.inputs.size() <= idx) {
                 this.data.inputs.add(new ItemStack(Material.AIR));
             }
-            this.data.inputs.set(idx, stack);
+            this.data.inputs.set(idx, cloneOrAir(stack));
         } else if (this.isFuelRowSlot(slot)) {
-            int idx = this.page * 9 + slot - 18;
+            int idx = this.page * COLS + slot - FUEL_START;
             while (this.data.fuels.size() <= idx) {
                 this.data.fuels.add(new ItemStack(Material.AIR));
             }
-            this.data.fuels.set(idx, stack);
+            this.data.fuels.set(idx, cloneOrAir(stack));
         } else if (this.isOutputSlot(slot)) {
-            int idx = this.page * 9 + slot - 36;
+            int idx = this.page * COLS + slot - OUTPUT_START;
             while (this.data.outputs.size() <= idx) {
                 this.data.outputs.add(new ItemStack(Material.AIR));
             }
-            this.data.outputs.set(idx, stack);
+            this.data.outputs.set(idx, cloneOrAir(stack));
         } else if (this.isFunctionalAreaSlot(slot)) {
             int ca = this.getCurrentFunctionalArea();
             if (ca < this.functionalAreas.size()) {
                 FureamFunctionalArea area = this.functionalAreas.get(ca);
-                if (area.isStorable(this, slot - 45)) {
-                    area.setGuiStack(this, slot - 45, stack);
+                if (area.isStorable(this, slot - FUNCTIONAL_START)) {
+                    area.setGuiStack(this, slot - FUNCTIONAL_START, cloneOrAir(stack));
                 }
             }
         }
@@ -406,6 +423,30 @@ public class FureamScreenInventory implements InventoryHolder {
             }
         }
         return false;
+    }
+
+    private static @NotNull ItemStack cloneOrAir(@Nullable ItemStack stack) {
+        return ItemCompat.isEmpty(stack) ? new ItemStack(Material.AIR) : stack.clone();
+    }
+
+    private static boolean sameStack(@Nullable ItemStack left, @Nullable ItemStack right) {
+        return ItemCompat.isEmpty(left) && ItemCompat.isEmpty(right) ||
+            !ItemCompat.isEmpty(left) && !ItemCompat.isEmpty(right) &&
+                left.getAmount() == right.getAmount() && left.isSimilar(right);
+    }
+
+    private static String safeFormat(String template, String fallback, Object... arguments) {
+        String selected = template == null ? fallback : template;
+        try {
+            return String.format(selected, arguments);
+        } catch (IllegalFormatException failure) {
+            if (WARNED_FORMATS.add(selected) && FureamMain.getInstance() != null) {
+                FureamMain.getInstance().getLogger().warning(
+                    "Invalid GUI format string '" + selected + "'; using '" + fallback + "'"
+                );
+            }
+            return String.format(fallback, arguments);
+        }
     }
 
     static {

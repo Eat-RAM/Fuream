@@ -2,12 +2,14 @@ package io.github.eat_ram.fuream.nbt;
 
 import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
+import java.lang.reflect.Method;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
 public final class NativeNbtList {
     private static final Map<Class<?>, Field> LIST_FIELDS = new ConcurrentHashMap<>();
+    private static final Map<Class<?>, Method> ADD_METHODS = new ConcurrentHashMap<>();
     private final Object raw;
 
     NativeNbtList(Object raw) {
@@ -30,11 +32,21 @@ public final class NativeNbtList {
             list.add(compound.raw());
             return;
         }
-        for (java.lang.reflect.Method method : raw.getClass().getMethods()) {
+        Method cached = ADD_METHODS.get(raw.getClass());
+        if (cached != null) {
+            try {
+                cached.invoke(raw, compound.raw());
+                return;
+            } catch (ReflectiveOperationException ignored) {
+                ADD_METHODS.remove(raw.getClass());
+            }
+        }
+        for (Method method : raw.getClass().getMethods()) {
             Class<?>[] parameters = method.getParameterTypes();
             if (parameters.length == 1 && parameters[0].isInstance(compound.raw())) {
                 try {
                     method.invoke(raw, compound.raw());
+                    ADD_METHODS.put(raw.getClass(), method);
                     return;
                 } catch (ReflectiveOperationException ignored) {
                 }

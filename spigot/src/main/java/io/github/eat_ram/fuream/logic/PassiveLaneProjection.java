@@ -16,13 +16,19 @@ public final class PassiveLaneProjection {
 
     public static final class State {
         private int sourceSlot = -1;
+        private ItemStack published;
 
         public int getSourceSlot() {
             return this.sourceSlot;
         }
 
+        public @Nullable ItemStack getPublished() {
+            return ItemCompat.isEmpty(this.published) ? null : this.published.clone();
+        }
+
         public void reset() {
             this.sourceSlot = -1;
+            this.published = null;
         }
     }
 
@@ -46,6 +52,7 @@ public final class PassiveLaneProjection {
         ItemStack projected = virtual.get(selected).clone();
         virtual.set(selected, ItemCompat.empty());
         state.sourceSlot = selected;
+        state.published = projected.clone();
         return projected;
     }
 
@@ -108,6 +115,5 @@ public final class PassiveLaneProjection {
     }
 
     private PassiveLaneProjection() {
-        throw new UnsupportedOperationException();
     }
 }

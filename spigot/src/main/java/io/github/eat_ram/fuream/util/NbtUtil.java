@@ -4,6 +4,7 @@ import java.lang.reflect.Field;
 import java.lang.reflect.Modifier;
 import java.util.List;
 import java.util.Map;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.eat_ram.fuream.compat.ItemCompat;
 import io.github.eat_ram.fuream.nbt.NativeItemNbt;
@@ -13,7 +14,9 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class NbtUtil {
+public final class NbtUtil {
+    public static final int MAX_LANE_SLOTS = 576;
+    private static final Map<Class<?>, Field> MAP_FIELDS = new ConcurrentHashMap<>();
     public static @NotNull ItemStack fromNbt(@Nullable NativeNbtCompound compound) {
         return compound == null ? ItemCompat.empty() : NativeItemNbt.read(compound);
     }
@@ -29,6 +32,11 @@ public abstract class NbtUtil {
         NativeNbtList list = resetCompoundList(parent, key);
         int slot = 0;
         for (ItemStack stack : stacks) {
+            if (slot >= MAX_LANE_SLOTS) {
+                throw new IllegalArgumentException(
+                    "Lane " + key + " exceeds " + MAX_LANE_SLOTS + " slots"
+                );
+            }
             if (!ItemCompat.isEmpty(stack)) {
                 NativeNbtCompound sub = NativeItemNbt.write(stack);
                 sub.setInt("Slot", slot);
@@ -50,12 +58,20 @@ public abstract class NbtUtil {
     ) {
         NativeNbtList list = parent.getList(key);
         if (list == null) return;
+        if (list.size() > MAX_LANE_SLOTS) {
+            throw new IllegalArgumentException("NBT list " + key + " exceeds " + MAX_LANE_SLOTS + " entries");
+        }
         for (int i = 0; i < list.size(); i++) {
             NativeNbtCompound sub = list.getCompound(i);
             if (sub == null || !sub.has("Slot")) continue;
             int slot = sub.getInt("Slot", -1);
+            if (slot < 0 || slot >= MAX_LANE_SLOTS) {
+                throw new IllegalArgumentException(
+                    "NBT slot " + slot + " is outside 0.." + (MAX_LANE_SLOTS - 1)
+                );
+            }
             ItemStack stack = fromNbt(sub);
-            if (slot < 0 || ItemCompat.isEmpty(stack)) continue;
+            if (ItemCompat.isEmpty(stack)) continue;
             while (target.size() <= slot) target.add(ItemCompat.empty());
             target.set(slot, stack);
         }
@@ -76,10 +92,13 @@ public abstract class NbtUtil {
     }
 
     private static Field findMapField(Class<?> type) {
+        Field cached = MAP_FIELDS.get(type);
+        if (cached != null) return cached;
         for (Class<?> current = type; current != null; current = current.getSuperclass()) {
             for (Field field : current.getDeclaredFields()) {
                 if (!Modifier.isStatic(field.getModifiers()) && Map.class.isAssignableFrom(field.getType())) {
                     field.setAccessible(true);
+                    MAP_FIELDS.put(type, field);
                     return field;
                 }
             }
@@ -88,6 +107,5 @@ public abstract class NbtUtil {
     }
 
     private NbtUtil() {
-        throw new UnsupportedOperationException();
     }
 }

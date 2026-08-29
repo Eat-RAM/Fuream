@@ -16,7 +16,7 @@ import org.bukkit.inventory.ItemStack;
 import org.jetbrains.annotations.NotNull;
 import org.jetbrains.annotations.Nullable;
 
-public abstract class FureamFurnaceLogic {
+public final class FureamFurnaceLogic {
     public static boolean isFuel(@Nullable ItemStack stack) {
         return FuelTable.isFuel(stack);
     }
@@ -88,6 +88,5 @@ public abstract class FureamFurnaceLogic {
     }
 
     private FureamFurnaceLogic() {
-        throw new UnsupportedOperationException();
     }
 }

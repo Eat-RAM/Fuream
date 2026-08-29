@@ -12,6 +12,8 @@ import org.bukkit.inventory.ItemStack;
 public final class NativeItemNbt {
     private static Method asNmsCopy;
     private static Method asBukkitCopy;
+    private static Method writeMethod;
+    private static Method readMethod;
     private static Object registryProvider;
 
     public static NativeNbtCompound write(ItemStack stack) {
@@ -20,6 +22,7 @@ public final class NativeItemNbt {
             ensureCraftMethods();
             Object nms = asNmsCopy.invoke(null, stack);
             NativeNbtCompound target = NativeNbtCompound.createForServer();
+            if (writeMethod != null) return invokeWrite(nms, target, writeMethod);
             for (Method method : nms.getClass().getMethods()) {
                 if (Modifier.isStatic(method.getModifiers())) continue;
                 Object[] args = serializationArguments(method.getParameterTypes(), target.raw());
@@ -29,6 +32,7 @@ public final class NativeItemNbt {
                     !target.raw().getClass().isAssignableFrom(returnType)) continue;
                 try {
                     Object result = method.invoke(nms, args);
+                    writeMethod = method;
                     if (result != null && target.raw().getClass().isInstance(result)) {
                         return new NativeNbtCompound(result);
                     }
@@ -36,9 +40,9 @@ public final class NativeItemNbt {
                 } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
                 }
             }
-            throw new IllegalStateException("Unable to locate native ItemStack save method");
+            throw new NbtCodecException("Unable to locate native ItemStack save method");
         } catch (ReflectiveOperationException e) {
-            throw new IllegalStateException("Unable to serialize Bukkit ItemStack", e);
+            throw new NbtCodecException("Unable to serialize Bukkit ItemStack", e);
         }
     }
 
@@ -47,6 +51,8 @@ public final class NativeItemNbt {
         try {
             ensureCraftMethods();
             Class<?> nmsClass = asNmsCopy.getReturnType();
+            if (readMethod != null) return invokeRead(compound, nmsClass, readMethod);
+            Throwable lastFailure = null;
             for (Method method : nmsClass.getMethods()) {
                 if (!Modifier.isStatic(method.getModifiers())) continue;
                 Object[] args = serializationArguments(method.getParameterTypes(), compound.raw());
@@ -57,14 +63,54 @@ public final class NativeItemNbt {
                     if (result instanceof Optional) result = ((Optional<?>) result).orElse(null);
                     if (result != null && nmsClass.isInstance(result)) {
                         ItemStack stack = (ItemStack) asBukkitCopy.invoke(null, result);
-                        return stack == null ? ItemCompat.empty() : stack;
+                        if (stack != null && !ItemCompat.isEmpty(stack)) {
+                            readMethod = method;
+                            return stack;
+                        }
                     }
-                } catch (ReflectiveOperationException | IllegalArgumentException ignored) {
+                } catch (ReflectiveOperationException | IllegalArgumentException failure) {
+                    lastFailure = failure;
                 }
             }
-        } catch (ReflectiveOperationException ignored) {
+            throw new NbtCodecException("Unable to locate native ItemStack load method", lastFailure);
+        } catch (ReflectiveOperationException e) {
+            throw new NbtCodecException("Unable to deserialize native ItemStack", e);
         }
-        return ItemCompat.empty();
+    }
+
+    public static void initialize() {
+        try {
+            ensureCraftMethods();
+        } catch (ReflectiveOperationException e) {
+            throw new NbtCodecException("Unable to initialize CraftItemStack conversion", e);
+        }
+    }
+
+    private static NativeNbtCompound invokeWrite(
+        Object nms, NativeNbtCompound target, Method method
+    ) throws ReflectiveOperationException {
+        Object[] args = serializationArguments(method.getParameterTypes(), target.raw());
+        if (args == null) throw new NbtCodecException("Cached ItemStack save method is no longer compatible");
+        Object result = method.invoke(nms, args);
+        return result != null && target.raw().getClass().isInstance(result)
+            ? new NativeNbtCompound(result) : target;
+    }
+
+    private static ItemStack invokeRead(
+        NativeNbtCompound compound, Class<?> nmsClass, Method method
+    ) throws ReflectiveOperationException {
+        Object[] args = serializationArguments(method.getParameterTypes(), compound.raw());
+        if (args == null) throw new NbtCodecException("Cached ItemStack load method is no longer compatible");
+        Object result = method.invoke(null, args);
+        if (result instanceof Optional) result = ((Optional<?>) result).orElse(null);
+        if (result == null || !nmsClass.isInstance(result)) {
+            throw new NbtCodecException("Native ItemStack load method returned no item");
+        }
+        ItemStack stack = (ItemStack) asBukkitCopy.invoke(null, result);
+        if (stack == null || ItemCompat.isEmpty(stack)) {
+            throw new NbtCodecException("Native ItemStack decoded as an empty item");
+        }
+        return stack;
     }
 
     private static Object[] serializationArguments(Class<?>[] parameterTypes, Object compound) {
@@ -116,6 +162,5 @@ public final class NativeItemNbt {
     }
 
     private NativeItemNbt() {
-        throw new UnsupportedOperationException();
     }
 }

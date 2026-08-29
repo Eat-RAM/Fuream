@@ -22,7 +22,7 @@ public final class ComparatorListener implements Listener {
         if (type == null) return;
         FureamWorldConfig config = FureamMain.getWorldConfig(source.getWorld());
         if (config == null || !config.getEnabledFurnaceTypes().contains(type)) return;
-        FurnaceManager.FurnaceContext context = FurnaceManager.CONTEXTS.get(new FurnacePos(source));
+        FurnaceManager.FurnaceContext context = FurnaceManager.getContext(new FurnacePos(source));
         if (context == null) context = FurnaceManager.getOrCreateContext(source);
         if (context != null) event.setNewCurrent(ComparatorCompat.calculate(context.data));
     }

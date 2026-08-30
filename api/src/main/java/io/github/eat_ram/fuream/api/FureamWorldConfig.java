@@ -120,6 +120,19 @@ public interface FureamWorldConfig {
 
     // i18n
 
+    default @NotNull EnumMap<@NotNull FurnaceType, @NotNull String> getGuiTitle() {
+        EnumMap<FurnaceType, String> titles = new EnumMap<>(FurnaceType.class);
+        titles.put(FurnaceType.FURNACE, "Furnace");
+        titles.put(FurnaceType.SMOKER, "Smoker");
+        titles.put(FurnaceType.BLAST_FURNACE, "Blast Furnace");
+        return titles;
+    }
+
+    default void setGuiTitle(
+        @NotNull EnumMap<@NotNull FurnaceType, @NotNull String> map
+    ) {
+    }
+
     @NotNull EnumMap<@NotNull FurnaceType, @NotNull String>
     getGuiBorderItemTitle();
 

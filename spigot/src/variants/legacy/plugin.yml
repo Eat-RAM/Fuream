@@ -1,0 +1,14 @@
+name: Fuream
+version: ${version}
+main: io.github.eat_ram.fuream.FureamMain
+commands:
+  fuream:
+    description: Fuream plugin management
+    usage: /<command> [reload|status]
+permissions:
+  fuream.reload:
+    description: Allows reloading Fuream configs
+    default: op
+  fuream.status:
+    description: Allows viewing Fuream status
+    default: op
